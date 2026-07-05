@@ -274,7 +274,10 @@ jobs:
 
   sync-version-file:
     needs: [release]
-    if: ${{ needs.release.result == 'success' }}
+    # Only run on the upstream repo. On forks this job would push a
+    # `chore: sync VERSION to X` commit to main and diverge from upstream,
+    # causing "Sync fork" conflicts on every future release.
+    if: ${{ needs.release.result == 'success' && github.repository == 'Wei-Shaw/sub2api' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout default branch
