@@ -65,19 +65,27 @@ func NewClaudeCodeValidator() *ClaudeCodeValidator {
 }
 
 // Validate 验证请求是否来自 Claude Code CLI
-// 采用与 claude-relay-service 完全一致的验证策略：
 //
-//	Step 1: User-Agent 检查 (必需) - 必须是 claude-cli/x.x.x
-//	Step 2: 对于非 messages 路径和 /messages/count_tokens，只要 UA 匹配就通过
-//	Step 3: 检查 max_tokens=1 + haiku 探测请求绕过（UA 已验证）
-//	Step 4: 对于 messages 路径，进行严格验证：
-//	        - System prompt 相似度检查
-//	        - X-App header 检查
-//	        - anthropic-beta header 检查
-//	        - anthropic-version header 检查
-//	        - metadata.user_id 格式验证
+// <fork:relax-claude-code-detect>
+// 只保留 UA 硬指纹（claude-cli/x.x.x）作为唯一判定条件。
+//
+// 原严格模式（system prompt Dice ≥ 0.5 + X-App/anthropic-beta/anthropic-version
+// 头必需 + metadata.user_id 格式合法）在以下真实 Claude Code 场景下会误判为非
+// Claude Code，导致 claude_code_only 分组返回 503：
+//   - 自定义子 agent（.claude/agents/*.md）用自定义 system prompt，跟官方 6 个
+//     模板 Dice 相似度不足
+//   - Task 工具派生的 general-purpose / code-reviewer 等子 agent
+//   - 中间反代（nginx/CF）剥掉了 X-App 等非白名单 header
+//   - Agent SDK 内部子请求不携带完整 metadata
+//
+// 权衡：UA 伪造成本极低（curl -H 就能过），但对我们这类"给自己人用"的私有
+// 部署来说，能通过认证 API key 就已经过了访问控制，UA 检查只是分流客户端类
+// 型的软门槛，不是安全边界。放宽这里更接近业务实际。
+//
+// 想恢复严格模式：把注释掉的 4.1/4.2/4.3 三段重新打开即可。
+// </fork>
 func (v *ClaudeCodeValidator) Validate(r *http.Request, body map[string]any) bool {
-	// Step 1: User-Agent 检查
+	// Step 1: User-Agent 检查 —— 唯一保留的强指纹
 	ua := r.Header.Get("User-Agent")
 	if !claudeCodeUAPattern.MatchString(ua) {
 		return false
@@ -100,8 +108,12 @@ func (v *ClaudeCodeValidator) Validate(r *http.Request, body map[string]any) boo
 		return true // 绕过 system prompt 检查，UA 已在 Step 1 验证
 	}
 
-	// Step 4: messages 路径，进行严格验证
+	// <fork:relax-claude-code-detect>
+	// UA 命中即视为 Claude Code 客户端。原严格验证已下沉为注释保留。
+	return true
+	// </fork>
 
+	/* 原严格验证（已 fork-local 关闭）：
 	// 4.1 检查 system prompt 相似度
 	if !v.hasClaudeCodeSystemPrompt(body) {
 		return false
@@ -143,6 +155,7 @@ func (v *ClaudeCodeValidator) Validate(r *http.Request, body map[string]any) boo
 	}
 
 	return true
+	*/
 }
 
 func isMessagesCountTokensPath(path string) bool {

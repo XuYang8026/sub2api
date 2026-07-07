@@ -193,6 +193,7 @@ func TestSetClaudeCodeClientContext_FastPathAndStrictPath(t *testing.T) {
 	})
 
 	t.Run("cli_messages_path_invalid_body_sets_false", func(t *testing.T) {
+		t.Skip("fork:relax-claude-code-detect — strict validation disabled")
 		c, _ := newHelperTestContext(http.MethodPost, "/v1/messages")
 		c.Request.Header.Set("User-Agent", "claude-cli/1.0.1")
 		// 缺少严格校验所需 header + body 字段

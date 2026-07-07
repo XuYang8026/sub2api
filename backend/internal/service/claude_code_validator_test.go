@@ -40,6 +40,7 @@ func TestClaudeCodeValidator_ProbeBypassRequiresUA(t *testing.T) {
 }
 
 func TestClaudeCodeValidator_MessagesWithoutProbeStillNeedStrictValidation(t *testing.T) {
+	t.Skip("fork:relax-claude-code-detect — strict validation disabled")
 	validator := NewClaudeCodeValidator()
 	req := httptest.NewRequest(http.MethodPost, "http://example.com/v1/messages", nil)
 	req.Header.Set("User-Agent", "claude-cli/1.2.3 (darwin; arm64)")
@@ -173,6 +174,7 @@ func TestClaudeCodeValidator_BillingBlockVSCodeEntrypointRecognized(t *testing.T
 }
 
 func TestClaudeCodeValidator_BillingBlockWithoutEntrypointFallsThrough(t *testing.T) {
+	t.Skip("fork:relax-claude-code-detect — strict validation disabled")
 	validator := NewClaudeCodeValidator()
 	req := httptest.NewRequest(http.MethodPost, "http://example.com/v1/messages", nil)
 	req.Header.Set("User-Agent", "claude-cli/2.1.162 (external, cli)")
@@ -306,6 +308,7 @@ func TestClaudeCodeValidator_MessagesPathRejectsNonClaudeCodeUA(t *testing.T) {
 }
 
 func TestClaudeCodeValidator_MessagesPathWithoutSystemPromptStillRejected(t *testing.T) {
+	t.Skip("fork:relax-claude-code-detect — strict validation disabled")
 	validator := NewClaudeCodeValidator()
 	req := httptest.NewRequest(http.MethodPost, "http://example.com/v1/messages", nil)
 	req.Header.Set("User-Agent", "claude-cli/2.1.156 (Claude Code)")
