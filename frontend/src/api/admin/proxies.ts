@@ -191,8 +191,43 @@ export async function getProxyAccounts(id: number): Promise<ProxyAccountSummary[
 /**
  * Batch create proxies
  * @param proxies - Array of proxy data to create
- * @returns Creation result with count of created and skipped
+ * @returns Creation result with count of created and skipped, plus per-item detected details
  */
+// <fork:proxy-smart-import> extended batch response with per-item detected
+// protocol/latency. `original` echoes the caller-supplied raw line so the UI
+// can render the input unchanged; it falls back to "host:port" server-side
+// when omitted, so it is effectively always present but typed as optional to
+// stay compatible with older backend builds.
+// `status` values:
+//   - 'created'       — persisted successfully
+//   - 'skipped'       — duplicate / transient error / create-race
+//   - 'detect_failed' — auto-detection failed; row is still saved with a
+//                       fallback protocol (http) so the operator can decide
+//                       whether to keep or correct it
+//   - 'failed'        — reserved for future use (kept in the union for
+//                       backward compat with early builds)
+// `reason` is the human-readable per-row explanation; older backend builds
+// may still emit `error` instead, so both are accepted.
+export interface BatchCreateItemResult {
+  original?: string
+  host?: string
+  port?: number
+  status: 'created' | 'skipped' | 'detect_failed' | 'failed'
+  protocol?: string
+  detected_protocol?: string
+  detected_latency_ms?: number
+  detection_error?: string
+  reason?: string
+  error?: string
+}
+
+export interface BatchCreateResult {
+  created: number
+  skipped: number
+  errored?: number
+  items?: BatchCreateItemResult[]
+}
+
 export async function batchCreate(
   proxies: Array<{
     protocol: string
@@ -200,16 +235,49 @@ export async function batchCreate(
     port: number
     username?: string
     password?: string
+    original?: string
   }>
-): Promise<{
-  created: number
-  skipped: number
-}> {
-  const { data } = await apiClient.post<{
-    created: number
-    skipped: number
-  }>('/admin/proxies/batch', { proxies })
+): Promise<BatchCreateResult> {
+  const { data } = await apiClient.post<BatchCreateResult>('/admin/proxies/batch', { proxies })
   return data
+}
+
+/**
+ * Get proxy health snapshot map (id -> health fields).
+ * Prefer the dedicated /health endpoint when available; falls back to /all payload.
+ */
+// <fork:proxy-circuit-breaker> health snapshot map
+export interface ProxyHealthSnapshot {
+  id: number
+  health_status?: 'unknown' | 'healthy' | 'unhealthy' | 'probing'
+  last_probed_at?: string | null
+  last_probe_error?: string
+  last_probe_latency_ms?: number | null
+  consecutive_failures?: number
+  unhealthy_since?: string | null
+}
+
+export async function getHealth(): Promise<ProxyHealthSnapshot[]> {
+  try {
+    const { data } = await apiClient.get<ProxyHealthSnapshot[]>('/admin/proxies/health')
+    return Array.isArray(data) ? data : []
+  } catch (error) {
+    // Endpoint may not be deployed; degrade to /all which now includes health fields.
+    try {
+      const { data } = await apiClient.get<Proxy[]>('/admin/proxies/all')
+      return (Array.isArray(data) ? data : []).map((p) => ({
+        id: p.id,
+        health_status: p.health_status,
+        last_probed_at: p.last_probed_at,
+        last_probe_error: p.last_probe_error,
+        last_probe_latency_ms: p.last_probe_latency_ms,
+        consecutive_failures: p.consecutive_failures,
+        unhealthy_since: p.unhealthy_since
+      }))
+    } catch {
+      throw error
+    }
+  }
 }
 
 export async function batchDelete(ids: number[]): Promise<{
@@ -271,7 +339,9 @@ export const proxiesAPI = {
   batchCreate,
   batchDelete,
   exportData,
-  importData
+  importData,
+  // <fork:proxy-circuit-breaker>
+  getHealth
 }
 
 export default proxiesAPI

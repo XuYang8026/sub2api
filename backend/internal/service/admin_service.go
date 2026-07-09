@@ -122,6 +122,10 @@ type AdminService interface {
 	CheckProxyExists(ctx context.Context, host string, port int, username, password string) (bool, error)
 	TestProxy(ctx context.Context, id int64) (*ProxyTestResult, error)
 	CheckProxyQuality(ctx context.Context, id int64) (*ProxyQualityCheckResult, error)
+	// DetectProxyProtocol auto-detects http vs socks5 for a proxy endpoint by
+	// running both probes concurrently. Used by smart batch import.
+	// <fork:proxy-smart-import>
+	DetectProxyProtocol(ctx context.Context, host string, port int, username, password string) (*ProxyProtocolDetectResult, error)
 
 	// Redeem code management
 	ListRedeemCodes(ctx context.Context, page, pageSize int, codeType, status, search string, sortBy, sortOrder string) ([]RedeemCode, int64, error)
@@ -4316,4 +4320,16 @@ func (s *adminServiceImpl) ForceAntigravityPrivacy(ctx context.Context, account 
 	}
 	applyAntigravityPrivacyMode(account, mode)
 	return mode
+}
+
+// DetectProxyProtocol races http:// and socks5:// probes against the given
+// endpoint and returns the winning protocol. Delegates to the package-level
+// DetectProxyProtocol helper — this method exists only so callers can go
+// through the AdminService interface (and thus be mocked in tests).
+// <fork:proxy-smart-import>
+func (s *adminServiceImpl) DetectProxyProtocol(ctx context.Context, host string, port int, username, password string) (*ProxyProtocolDetectResult, error) {
+	if s.proxyProber == nil {
+		return nil, fmt.Errorf("proxy prober not configured")
+	}
+	return DetectProxyProtocol(ctx, s.proxyProber, host, port, username, password)
 }

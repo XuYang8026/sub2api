@@ -475,6 +475,72 @@ func ProxyFromServiceAdmin(p *service.Proxy) *AdminProxy {
 	}
 }
 
+// <fork:proxy-circuit-breaker>
+// applyProxyHealthSnapshot copies fields from a ProxyHealthSnapshot into the
+// health fields on a Proxy DTO. Nil snapshot is a no-op.
+func applyProxyHealthSnapshot(dst *Proxy, snap *service.ProxyHealthSnapshot) {
+	if dst == nil || snap == nil {
+		return
+	}
+	status := snap.Status
+	dst.HealthStatus = &status
+	if snap.LastProbedAt != nil {
+		t := *snap.LastProbedAt
+		dst.LastProbedAt = &t
+	}
+	if snap.LastProbeError != "" {
+		s := snap.LastProbeError
+		dst.LastProbeError = &s
+	}
+	if snap.LastProbeLatencyMs != nil {
+		v := *snap.LastProbeLatencyMs
+		dst.LastProbeLatencyMs = &v
+	}
+	failures := snap.ConsecutiveFailures
+	dst.ConsecutiveFailures = &failures
+	if snap.UnhealthySince != nil {
+		t := *snap.UnhealthySince
+		dst.UnhealthySince = &t
+	}
+}
+
+// ProxyFromServiceAdminWithHealth is a variant of ProxyFromServiceAdmin that
+// additionally injects health snapshot fields. Callers that need the batch
+// pattern should pre-load snapshots via ProxyHealthRepository.LoadHealthByIDs
+// and pass the per-id entry here.
+func ProxyFromServiceAdminWithHealth(p *service.Proxy, snap *service.ProxyHealthSnapshot) *AdminProxy {
+	out := ProxyFromServiceAdmin(p)
+	if out == nil {
+		return nil
+	}
+	applyProxyHealthSnapshot(&out.Proxy, snap)
+	return out
+}
+
+// ProxyWithAccountCountFromServiceAdminWithHealth mirrors the above for the
+// account-count-embedded DTO used by the paginated admin list.
+func ProxyWithAccountCountFromServiceAdminWithHealth(p *service.ProxyWithAccountCount, snap *service.ProxyHealthSnapshot) *AdminProxyWithAccountCount {
+	out := ProxyWithAccountCountFromServiceAdmin(p)
+	if out == nil {
+		return nil
+	}
+	applyProxyHealthSnapshot(&out.Proxy, snap)
+	return out
+}
+
+// ProxyFromServiceWithHealth mirrors ProxyFromService but injects a health
+// snapshot; used by non-admin flows (e.g. account list responses).
+func ProxyFromServiceWithHealth(p *service.Proxy, snap *service.ProxyHealthSnapshot) *Proxy {
+	out := ProxyFromService(p)
+	if out == nil {
+		return nil
+	}
+	applyProxyHealthSnapshot(out, snap)
+	return out
+}
+
+// </fork>
+
 // ProxyWithAccountCountFromServiceAdmin converts a service ProxyWithAccountCount to AdminProxyWithAccountCount DTO.
 // It includes the password field - user-facing endpoints must not use this.
 func ProxyWithAccountCountFromServiceAdmin(p *service.ProxyWithAccountCount) *AdminProxyWithAccountCount {

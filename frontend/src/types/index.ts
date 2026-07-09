@@ -749,6 +749,13 @@ export interface Proxy {
   expiry_warn_days: number
   created_at: string
   updated_at: string
+  // <fork:proxy-circuit-breaker> health tracking fields populated by backend migration 159
+  health_status?: 'unknown' | 'healthy' | 'unhealthy' | 'probing'
+  last_probed_at?: string | null
+  last_probe_error?: string
+  last_probe_latency_ms?: number | null
+  consecutive_failures?: number
+  unhealthy_since?: string | null
 }
 
 export interface ProxyAccountSummary {

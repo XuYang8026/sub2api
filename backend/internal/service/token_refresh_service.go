@@ -351,6 +351,24 @@ func (s *TokenRefreshService) refreshWithRetry(ctx context.Context, account *Acc
 	if lastErr != nil {
 		reason += ": " + logredact.RedactText(lastErr.Error())
 	}
+	// <fork:proxy-circuit-breaker>
+	// If the exhausted retry chain was actually caused by proxy failures
+	// (dial refused / socks / TLS handshake), delegate to the circuit
+	// breaker which sets a longer 15-min cooldown *and* increments the
+	// bound proxy's failure counter. Return early to avoid the shorter
+	// 10-min block being overwritten in a race.
+	if lastErr != nil {
+		if cb := GetProxyCircuitBreaker(); cb != nil {
+			if class := cb.HandleAccountProxyError(ctx, account, lastErr); class != ProxyErrorNone {
+				slog.Info("token_refresh.deferred_to_proxy_circuit_breaker",
+					"account_id", account.ID,
+					"class", string(class),
+				)
+				return lastErr
+			}
+		}
+	}
+	// </fork>
 	s.notifyAccountSchedulingBlocked(account, until, "token_refresh_retry_exhausted")
 	if setErr := s.accountRepo.SetTempUnschedulable(ctx, account.ID, until, reason); setErr != nil {
 		slog.Warn("token_refresh.set_temp_unschedulable_failed",

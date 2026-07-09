@@ -252,6 +252,21 @@
             </div>
           </template>
 
+          <!-- <fork:proxy-circuit-breaker> -->
+          <template #cell-health="{ row }">
+            <div class="flex flex-col gap-1">
+              <span
+                :class="['badge', healthBadgeClass(row.health_status)]"
+                :title="row.health_status === 'unhealthy' ? (row.last_probe_error || '') : ''"
+              >
+                {{ healthBadgeLabel(row.health_status) }}
+              </span>
+              <span v-if="row.last_probed_at" class="text-xs text-gray-500 dark:text-gray-400">
+                {{ formatRelativeTime(row.last_probed_at) }}
+              </span>
+            </div>
+          </template>
+
           <template #cell-created_at="{ row }">
             <span class="text-xs text-gray-600 dark:text-gray-300">{{ formatDateTime(row.created_at) }}</span>
           </template>
@@ -324,6 +339,15 @@
                 </svg>
                 <Icon v-else name="shield" size="sm" />
                 <span class="text-xs">{{ t('admin.proxies.qualityCheck') }}</span>
+              </button>
+              <!-- <fork:proxy-circuit-breaker> immediate probe -->
+              <button
+                @click="handleProbeNow(row)"
+                :disabled="testingProxyIds.has(row.id)"
+                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-amber-50 hover:text-amber-600 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-amber-900/20 dark:hover:text-amber-400"
+              >
+                <Icon name="refresh" size="sm" :class="testingProxyIds.has(row.id) ? 'animate-spin' : ''" />
+                <span class="text-xs">{{ t('admin.proxies.probe_now') }}</span>
               </button>
               <button
                 @click="handleEdit(row)"
@@ -584,6 +608,74 @@
                 {{ t('admin.proxies.duplicateCount', { count: batchParseResult.duplicate }) }}
               </span>
             </div>
+            <!-- <fork:proxy-smart-import> auto-detect badge summary -->
+            <div v-if="batchParseResult.autoDetectCount > 0" class="flex items-center gap-1.5">
+              <span class="badge badge-primary">{{ t('admin.proxies.auto_detect_protocol') }}</span>
+              <span class="text-gray-600 dark:text-gray-300">
+                {{ batchParseResult.autoDetectCount }}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <!-- <fork:proxy-smart-import> result table after backend import -->
+        <div
+          v-if="batchImportResults.length > 0"
+          class="rounded-lg border border-gray-200 dark:border-dark-600"
+        >
+          <div class="border-b border-gray-200 bg-gray-50 px-3 py-2 text-xs font-semibold uppercase text-gray-500 dark:border-dark-600 dark:bg-dark-800 dark:text-dark-400">
+            {{ t('admin.proxies.batch_import_result_title') }}
+          </div>
+          <div class="max-h-56 overflow-auto">
+            <table class="min-w-full divide-y divide-gray-200 text-sm dark:divide-dark-700">
+              <tbody class="divide-y divide-gray-200 bg-white dark:divide-dark-700 dark:bg-dark-900">
+                <tr v-for="(item, idx) in batchImportResults" :key="idx">
+                  <td class="px-3 py-2 font-mono text-xs text-gray-700 dark:text-gray-200">
+                    {{ item.original }}
+                  </td>
+                  <td class="px-3 py-2">
+                    <!-- <fork:proxy-smart-import> detect_failed shows a warning
+                         (amber) badge — the row was saved but the protocol is
+                         a guess, so the operator should double-check. -->
+                    <span
+                      class="badge"
+                      :class="item.status === 'created'
+                        ? 'badge-success'
+                        : item.status === 'detect_failed'
+                          ? 'badge-warning'
+                          : item.status === 'failed'
+                            ? 'badge-danger'
+                            : 'badge-gray'"
+                    >
+                      {{ t(`admin.proxies.batch_status.${item.status}`) }}
+                    </span>
+                  </td>
+                  <td class="px-3 py-2 text-xs text-gray-600 dark:text-gray-300">
+                    <span v-if="item.detected_protocol">
+                      {{ t('admin.proxies.batch_import_detected_protocol', { protocol: item.detected_protocol.toUpperCase() }) }}
+                    </span>
+                  </td>
+                  <td class="px-3 py-2 text-xs text-gray-600 dark:text-gray-300">
+                    <!-- <fork:proxy-smart-import> Show latency when available;
+                         otherwise surface the reason (used by detect_failed /
+                         skipped rows). Both cases can coexist per row, so we
+                         render them as sibling spans. -->
+                    <span v-if="typeof item.detected_latency_ms === 'number'">
+                      {{ t('admin.proxies.batch_import_latency_ms', { latency: item.detected_latency_ms }) }}
+                    </span>
+                    <span
+                      v-if="item.reason"
+                      class="ml-1"
+                      :class="item.status === 'detect_failed'
+                        ? 'text-amber-600 dark:text-amber-400'
+                        : 'text-red-500 dark:text-red-400'"
+                    >
+                      {{ item.reason }}
+                    </span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </div>
 
@@ -986,7 +1078,7 @@ import { useClipboard } from '@/composables/useClipboard'
 import { useSwipeSelect } from '@/composables/useSwipeSelect'
 import { useTableSelection } from '@/composables/useTableSelection'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
-import { formatDateTime } from '@/utils/format'
+import { formatDateTime, formatRelativeTime } from '@/utils/format'
 import { proxyExpiryBadgeClass, proxyExpiryLabelKey } from '@/utils/proxyExpiry'
 
 const { t } = useI18n()
@@ -1002,6 +1094,8 @@ const columns = computed<Column[]>(() => [
   { key: 'location', label: t('admin.proxies.columns.location'), sortable: false },
   { key: 'account_count', label: t('admin.proxies.columns.accounts'), sortable: true },
   { key: 'latency', label: t('admin.proxies.columns.latency'), sortable: false },
+  // <fork:proxy-circuit-breaker>
+  { key: 'health', label: t('admin.proxies.columns.health'), sortable: false },
   { key: 'expiry', label: t('admin.proxies.columns.expiry'), sortable: true },
   { key: 'created_at', label: t('admin.proxies.columns.createdAt'), sortable: true },
   { key: 'status', label: t('admin.proxies.columns.status'), sortable: true },
@@ -1107,19 +1201,35 @@ const qualityReport = ref<ProxyQualityCheckResult | null>(null)
 // Batch import state
 const createMode = ref<'standard' | 'batch'>('standard')
 const batchInput = ref('')
+// <fork:proxy-smart-import> parsed entry now records original line + optional protocol (auto-detect)
+type BatchParsedProxy = {
+  protocol: ProxyProtocol | ''
+  host: string
+  port: number
+  username: string
+  password: string
+  original: string
+}
 const batchParseResult = reactive({
   total: 0,
   valid: 0,
   invalid: 0,
   duplicate: 0,
-  proxies: [] as Array<{
-    protocol: ProxyProtocol
-    host: string
-    port: number
-    username: string
-    password: string
-  }>
+  autoDetectCount: 0,
+  proxies: [] as BatchParsedProxy[]
 })
+// <fork:proxy-smart-import> per-item outcome after backend batchCreate.
+// `detect_failed` is a fork-only status that means the row was saved but
+// the protocol is a guess (auto-detection failed) — we render it with a
+// warning badge so the operator knows to double-check.
+type BatchImportItemView = {
+  original: string
+  status: 'created' | 'skipped' | 'detect_failed' | 'failed'
+  detected_protocol?: string
+  detected_latency_ms?: number
+  reason?: string
+}
+const batchImportResults = ref<BatchImportItemView[]>([])
 
 const createForm = reactive({
   name: '',
@@ -1267,7 +1377,9 @@ const closeCreateModal = () => {
   batchParseResult.valid = 0
   batchParseResult.invalid = 0
   batchParseResult.duplicate = 0
+  batchParseResult.autoDetectCount = 0
   batchParseResult.proxies = []
+  batchImportResults.value = []
 }
 
 const handleDataImported = () => {
@@ -1275,45 +1387,113 @@ const handleDataImported = () => {
   loadProxies()
 }
 
-// Parse proxy URL: protocol://user:pass@host:port or protocol://host:port
+// Parse proxy line: supports multiple formats mirroring backend smart-import parser.
+// <fork:proxy-smart-import>
+// Supported formats (per line):
+//   1. Full URL:                proto://[user:pass@]host:port  (proto: http/https/socks5/socks5h)
+//   2. Bare host:port:          host:port  (protocol left blank → backend auto-detects)
+//   3. host:port with auth URL: user:pass@host:port
+//   4. Colon-separated:         host:port:user:pass
+//   5. Pipe-separated:          host|port|user|pass  (also supports host|port)
+// When the protocol is not specified, the parser returns protocol="" and the UI shows an "auto-detect" badge.
 const parseProxyUrl = (
   line: string
 ): {
-  protocol: ProxyProtocol
+  protocol: ProxyProtocol | ''
   host: string
   port: number
   username: string
   password: string
+  original: string
 } | null => {
   const trimmed = line.trim()
   if (!trimmed) return null
 
-  // Regex to parse proxy URL (supports http, https, socks5, socks5h)
-  const regex = /^(https?|socks5h?):\/\/(?:([^:@]+):([^@]+)@)?([^:]+):(\d+)$/i
-  const match = trimmed.match(regex)
+  const portOK = (n: number) => Number.isInteger(n) && n >= 1 && n <= 65535
+  const original = trimmed
 
-  if (!match) return null
-
-  const [, protocol, username, password, host, port] = match
-  const portNum = parseInt(port, 10)
-
-  if (portNum < 1 || portNum > 65535) return null
-
-  return {
-    protocol: protocol.toLowerCase() as ProxyProtocol,
-    host: host.trim(),
-    port: portNum,
-    username: username?.trim() || '',
-    password: password?.trim() || ''
+  // Format 1: protocol://[user:pass@]host:port
+  const urlRegex = /^(https?|socks5h?):\/\/(?:([^:@/]+)(?::([^@/]*))?@)?([^:/@]+):(\d+)$/i
+  const urlMatch = trimmed.match(urlRegex)
+  if (urlMatch) {
+    const [, protocol, username, password, host, portStr] = urlMatch
+    const port = parseInt(portStr, 10)
+    if (!portOK(port)) return null
+    return {
+      protocol: protocol.toLowerCase() as ProxyProtocol,
+      host: host.trim(),
+      port,
+      username: username?.trim() || '',
+      password: password?.trim() || '',
+      original
+    }
   }
+
+  // Format 5: pipe-separated host|port[|user|pass]
+  if (trimmed.includes('|')) {
+    const parts = trimmed.split('|').map((p) => p.trim())
+    if (parts.length === 2 || parts.length === 4) {
+      const [host, portStr, username = '', password = ''] = parts
+      const port = parseInt(portStr, 10)
+      if (host && portOK(port)) {
+        return { protocol: '', host, port, username, password, original }
+      }
+    }
+    return null
+  }
+
+  // Format 3: user:pass@host:port
+  if (trimmed.includes('@')) {
+    const atIdx = trimmed.lastIndexOf('@')
+    const authPart = trimmed.slice(0, atIdx)
+    const hostPart = trimmed.slice(atIdx + 1)
+    const authMatch = authPart.match(/^([^:]+):(.*)$/)
+    const hostMatch = hostPart.match(/^([^:]+):(\d+)$/)
+    if (authMatch && hostMatch) {
+      const port = parseInt(hostMatch[2], 10)
+      if (!portOK(port)) return null
+      return {
+        protocol: '',
+        host: hostMatch[1].trim(),
+        port,
+        username: authMatch[1].trim(),
+        password: authMatch[2].trim(),
+        original
+      }
+    }
+    return null
+  }
+
+  // Colon-separated: host:port  OR  host:port:user:pass
+  if (trimmed.includes(':')) {
+    const parts = trimmed.split(':').map((p) => p.trim())
+    if (parts.length === 2) {
+      const [host, portStr] = parts
+      const port = parseInt(portStr, 10)
+      if (host && portOK(port)) {
+        return { protocol: '', host, port, username: '', password: '', original }
+      }
+    }
+    if (parts.length === 4) {
+      const [host, portStr, username, password] = parts
+      const port = parseInt(portStr, 10)
+      if (host && portOK(port)) {
+        return { protocol: '', host, port, username, password, original }
+      }
+    }
+    return null
+  }
+
+  return null
 }
 
 const parseBatchInput = () => {
   const lines = batchInput.value.split('\n').filter((l) => l.trim())
   const seen = new Set<string>()
-  const proxies: typeof batchParseResult.proxies = []
+  const proxies: BatchParsedProxy[] = []
   let invalid = 0
   let duplicate = 0
+  let autoDetect = 0
 
   for (const line of lines) {
     const parsed = parseProxyUrl(line)
@@ -1329,6 +1509,7 @@ const parseBatchInput = () => {
       continue
     }
     seen.add(key)
+    if (!parsed.protocol) autoDetect++
     proxies.push(parsed)
   }
 
@@ -1336,7 +1517,9 @@ const parseBatchInput = () => {
   batchParseResult.valid = proxies.length
   batchParseResult.invalid = invalid
   batchParseResult.duplicate = duplicate
+  batchParseResult.autoDetectCount = autoDetect
   batchParseResult.proxies = proxies
+  batchImportResults.value = []
 }
 
 const handleBatchCreate = async () => {
@@ -1344,9 +1527,47 @@ const handleBatchCreate = async () => {
 
   submitting.value = true
   try {
-    const result = await adminAPI.proxies.batchCreate(batchParseResult.proxies)
+    // <fork:proxy-smart-import> pass original line + optional protocol to backend
+    const payload = batchParseResult.proxies.map((p) => ({
+      protocol: p.protocol,
+      host: p.host,
+      port: p.port,
+      username: p.username || undefined,
+      password: p.password || undefined,
+      original: p.original
+    }))
+    const result = await adminAPI.proxies.batchCreate(payload)
     const created = result.created || 0
     const skipped = result.skipped || 0
+
+    // <fork:proxy-smart-import> render per-item detected protocol/latency when returned.
+    // Fall back gracefully across backend field renames:
+    //   - `original` may be omitted by older builds → synthesise from host:port
+    //   - `reason` may still arrive as `error` on older builds
+    //   - `detect_failed` is a fork-only status; treat unknown values as 'skipped'
+    if (Array.isArray(result.items) && result.items.length > 0) {
+      batchImportResults.value = result.items.map((item) => {
+        const original =
+          item.original ||
+          (item.host && typeof item.port === 'number'
+            ? `${item.host}:${item.port}`
+            : '')
+        const reason = item.reason || item.error || item.detection_error || ''
+        const allowed = ['created', 'skipped', 'detect_failed', 'failed'] as const
+        const status = (allowed as readonly string[]).includes(item.status)
+          ? (item.status as BatchImportItemView['status'])
+          : 'skipped'
+        return {
+          original,
+          status,
+          detected_protocol: item.detected_protocol,
+          detected_latency_ms: item.detected_latency_ms,
+          reason
+        }
+      })
+    } else {
+      batchImportResults.value = []
+    }
 
     if (created > 0) {
       appStore.showSuccess(t('admin.proxies.batchImportSuccess', { created, skipped }))
@@ -1354,7 +1575,10 @@ const handleBatchCreate = async () => {
       appStore.showInfo(t('admin.proxies.batchImportAllSkipped', { skipped }))
     }
 
-    closeCreateModal()
+    // Only auto-close when there is nothing more to inspect (no per-item detected details).
+    if (batchImportResults.value.length === 0) {
+      closeCreateModal()
+    }
     loadProxies()
   } catch (error: any) {
     appStore.showError(error.response?.data?.detail || t('admin.proxies.failedToImport'))
@@ -1758,6 +1982,51 @@ const qualityOverallClass = (status?: string) => {
   if (status === 'warn') return 'badge-warning'
   if (status === 'challenge') return 'badge-danger'
   return 'badge-danger'
+}
+
+// <fork:proxy-circuit-breaker>
+const healthBadgeClass = (status?: Proxy['health_status']) => {
+  if (status === 'healthy') return 'badge-success'
+  if (status === 'unhealthy') return 'badge-danger'
+  if (status === 'probing') return 'badge-warning'
+  return 'badge-gray'
+}
+
+// <fork:proxy-circuit-breaker>
+const healthBadgeLabel = (status?: Proxy['health_status']) => {
+  if (status === 'healthy') return t('admin.proxies.health_status.healthy')
+  if (status === 'unhealthy') return t('admin.proxies.health_status.unhealthy')
+  if (status === 'probing') return t('admin.proxies.health_status.probing')
+  return t('admin.proxies.health_status.unknown')
+}
+
+// <fork:proxy-circuit-breaker> refresh health snapshot for a single row after probe
+const applyHealthResultFromTest = (
+  proxyId: number,
+  result: { success: boolean; latency_ms?: number; message?: string } | null
+) => {
+  const target = proxies.value.find((p) => p.id === proxyId)
+  if (!target) return
+  if (!result) {
+    target.health_status = 'unhealthy'
+    return
+  }
+  target.last_probed_at = new Date().toISOString()
+  if (result.success) {
+    target.health_status = 'healthy'
+    target.last_probe_latency_ms = result.latency_ms ?? null
+    target.last_probe_error = undefined
+    target.consecutive_failures = 0
+  } else {
+    target.health_status = 'unhealthy'
+    target.last_probe_error = result.message
+  }
+}
+
+// <fork:proxy-circuit-breaker>
+const handleProbeNow = async (proxy: Proxy) => {
+  const result = await runProxyTest(proxy.id, true)
+  applyHealthResultFromTest(proxy.id, result as any)
 }
 
 const qualityOverallLabel = (status?: string) => {

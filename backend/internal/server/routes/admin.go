@@ -413,6 +413,11 @@ func registerProxyRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		proxies.GET("/all", h.Admin.Proxy.GetAll)
 		proxies.GET("/data", h.Admin.Proxy.ExportData)
 		proxies.POST("/data", h.Admin.Proxy.ImportData)
+		// <fork:proxy-circuit-breaker>
+		// Health snapshot for all active proxies (single round-trip).
+		// Frontend polls this to overlay health badges on the proxy table.
+		proxies.GET("/health", h.Admin.Proxy.GetHealth)
+		// </fork>
 		proxies.GET("/:id", h.Admin.Proxy.GetByID)
 		proxies.POST("", h.Admin.Proxy.Create)
 		proxies.PUT("/:id", h.Admin.Proxy.Update)

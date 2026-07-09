@@ -3451,6 +3451,8 @@ export default {
       revertProxy: 'Revert proxy',
       revertProxySuccess: 'Successfully reverted to original proxy',
       revertProxyFailed: 'Failed to revert proxy',
+      // <fork:proxy-circuit-breaker>
+      proxy_unavailable: 'Proxy unavailable',
       createSparkShadow: 'Create Spark Shadow',
       createSparkShadowConfirm: 'Create a spark shadow account linked to "{name}"? It shares the parent\'s credentials and serves only spark models.',
       createSparkShadowSuccess: 'Spark shadow account created',
@@ -4417,9 +4419,32 @@ export default {
         status: 'Status',
         accounts: 'Accounts',
         latency: 'Latency',
+        health: 'Health',
         expiry: 'Validity',
         createdAt: 'Created',
         actions: 'Actions'
+      },
+      // <fork:proxy-circuit-breaker>
+      health_status: {
+        healthy: 'Healthy',
+        unhealthy: 'Unavailable',
+        unknown: 'Unknown',
+        probing: 'Probing'
+      },
+      probe_now: 'Probe now',
+      // <fork:proxy-smart-import>
+      auto_detect_protocol: 'Auto-detect',
+      batch_import_result_title: 'Import Result',
+      batch_import_detected_protocol: 'Detected protocol: {protocol}',
+      batch_import_latency_ms: '{latency}ms',
+      // <fork:proxy-smart-import> per-row status labels shown in the import
+      // result table. `detect_failed` = row was saved but the protocol is a
+      // guess (auto-detection failed) — rendered with an amber warning badge.
+      batch_status: {
+        created: 'Created',
+        skipped: 'Skipped',
+        detect_failed: 'Detect failed',
+        failed: 'Failed'
       },
       testConnection: 'Test Connection',
       qualityCheck: 'Quality Check',
