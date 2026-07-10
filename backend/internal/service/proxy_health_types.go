@@ -29,13 +29,13 @@ const (
 // ProxyHealthSnapshot is a read-model of the health columns on the proxies
 // table. Nil pointer fields mean the DB column is NULL.
 type ProxyHealthSnapshot struct {
-	ProxyID              int64      `json:"proxy_id"`
-	Status               string     `json:"status"`
-	LastProbedAt         *time.Time `json:"last_probed_at,omitempty"`
-	LastProbeError       string     `json:"last_probe_error,omitempty"`
-	LastProbeLatencyMs   *int64     `json:"last_probe_latency_ms,omitempty"`
-	ConsecutiveFailures  int        `json:"consecutive_failures"`
-	UnhealthySince       *time.Time `json:"unhealthy_since,omitempty"`
+	ProxyID             int64      `json:"proxy_id"`
+	Status              string     `json:"status"`
+	LastProbedAt        *time.Time `json:"last_probed_at,omitempty"`
+	LastProbeError      string     `json:"last_probe_error,omitempty"`
+	LastProbeLatencyMs  *int64     `json:"last_probe_latency_ms,omitempty"`
+	ConsecutiveFailures int        `json:"consecutive_failures"`
+	UnhealthySince      *time.Time `json:"unhealthy_since,omitempty"`
 }
 
 // IsUnhealthy reports whether the proxy should be excluded from scheduling.

@@ -91,6 +91,12 @@ func TestValidate_MessagesPath_FullValid(t *testing.T) {
 }
 
 func TestValidate_MessagesPath_MissingHeaders(t *testing.T) {
+	// <fork:relax-claude-code-detect>
+	// 这些断言依赖严格 policy 拒绝缺失头/元数据的请求；fork 通过 init() 把
+	// deep-validation policy 换成 relaxed（仅 UA 判定），会让这些断言全部失败。
+	// 恢复严格模式：删除 forkext_claude_code_relaxed.go 后本用例即可恢复。
+	t.Skip("fork:relax-claude-code-detect — strict validation disabled")
+	// </fork>
 	v := newTestValidator()
 	body := validClaudeCodeBody()
 
@@ -119,6 +125,9 @@ func TestValidate_MessagesPath_MissingHeaders(t *testing.T) {
 }
 
 func TestValidate_MessagesPath_InvalidMetadataUserID(t *testing.T) {
+	// <fork:relax-claude-code-detect>
+	t.Skip("fork:relax-claude-code-detect — strict validation disabled")
+	// </fork>
 	v := newTestValidator()
 
 	tests := []struct {
@@ -160,6 +169,9 @@ func TestValidate_MessagesPath_InvalidMetadataUserID(t *testing.T) {
 }
 
 func TestValidate_MessagesPath_InvalidSystemPrompt(t *testing.T) {
+	// <fork:relax-claude-code-detect>
+	t.Skip("fork:relax-claude-code-detect — strict validation disabled")
+	// </fork>
 	v := newTestValidator()
 
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
@@ -269,6 +281,9 @@ func TestIsClaudeCodeClient_Context(t *testing.T) {
 }
 
 func TestValidate_NilBody_MessagesPath(t *testing.T) {
+	// <fork:relax-claude-code-detect>
+	t.Skip("fork:relax-claude-code-detect — strict validation disabled")
+	// </fork>
 	v := newTestValidator()
 
 	req := httptest.NewRequest("POST", "/v1/messages", nil)

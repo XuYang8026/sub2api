@@ -29,12 +29,6 @@ func newFakeProber() *fakeProber {
 	return &fakeProber{byURL: map[string]fakeProbeOutcome{}}
 }
 
-func (f *fakeProber) seed(url string, o fakeProbeOutcome) {
-	f.mu.Lock()
-	f.byURL[url] = o
-	f.mu.Unlock()
-}
-
 // seedScheme is a helper — matches ProbeProxy(ctx, url) where url begins with the given prefix.
 func (f *fakeProber) seedScheme(prefix string, o fakeProbeOutcome) {
 	f.mu.Lock()

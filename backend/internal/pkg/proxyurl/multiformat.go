@@ -7,12 +7,12 @@
 // Supported formats (whitespace and BOM trimmed per line, comments starting
 // with '#' skipped, empty lines skipped):
 //
-//	1. protocol://[user:pass@]host:port      — canonical URL form
-//	2. host:port                             — bare, no protocol (needs detection)
-//	3. user:pass@host:port                   — bare with auth (needs detection)
-//	4. host:port:user:pass                   — colon-separated 4-field
-//	5. host|port|user|pass                   — pipe-separated
-//	6. host:port,user,pass                   — mixed comma variant
+//  1. protocol://[user:pass@]host:port      — canonical URL form
+//  2. host:port                             — bare, no protocol (needs detection)
+//  3. user:pass@host:port                   — bare with auth (needs detection)
+//  4. host:port:user:pass                   — colon-separated 4-field
+//  5. host|port|user|pass                   — pipe-separated
+//  6. host:port,user,pass                   — mixed comma variant
 //
 // Any format that does not carry an explicit scheme sets
 // ParsedLine.NeedsProtocolDetection = true so the caller can probe.
@@ -161,13 +161,13 @@ func detectURLScheme(line string) (string, bool) {
 	// Scheme must be alphanumeric plus +/-/. per RFC 3986.
 	for i, r := range scheme {
 		if i == 0 {
-			if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')) {
+			if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') {
 				return "", false
 			}
 			continue
 		}
-		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
-			(r >= '0' && r <= '9') || r == '+' || r == '.' || r == '-') {
+		if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') &&
+			(r < '0' || r > '9') && r != '+' && r != '.' && r != '-' {
 			return "", false
 		}
 	}

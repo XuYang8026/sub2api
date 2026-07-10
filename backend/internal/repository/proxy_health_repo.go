@@ -49,7 +49,7 @@ func (r *proxyHealthRepository) LoadHealth(ctx context.Context, id int64) (*serv
 	if err != nil {
 		return nil, fmt.Errorf("proxy_health load: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	if !rows.Next() {
 		return nil, nil
 	}
@@ -94,7 +94,7 @@ func (r *proxyHealthRepository) LoadHealthByIDs(ctx context.Context, ids []int64
 	if err != nil {
 		return nil, fmt.Errorf("proxy_health load_many: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := make(map[int64]*service.ProxyHealthSnapshot, len(ids))
 	for rows.Next() {
 		snap := &service.ProxyHealthSnapshot{}
@@ -184,7 +184,7 @@ func (r *proxyHealthRepository) IncrementFailure(ctx context.Context, id int64, 
 	if err != nil {
 		return 0, fmt.Errorf("proxy_health increment_failure: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	if !rows.Next() {
 		return 0, nil
 	}
@@ -206,7 +206,7 @@ func (r *proxyHealthRepository) ListActiveIDs(ctx context.Context) ([]int64, err
 	if err != nil {
 		return nil, fmt.Errorf("proxy_health list_active: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var ids []int64
 	for rows.Next() {
 		var id int64
@@ -229,7 +229,7 @@ func (r *proxyHealthRepository) ListUnhealthyIDs(ctx context.Context) ([]int64, 
 	if err != nil {
 		return nil, fmt.Errorf("proxy_health list_unhealthy: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var ids []int64
 	for rows.Next() {
 		var id int64
@@ -253,7 +253,7 @@ func (r *proxyHealthRepository) ListAccountIDsByProxyID(ctx context.Context, pro
 	if err != nil {
 		return nil, fmt.Errorf("proxy_health list_accounts: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var ids []int64
 	for rows.Next() {
 		var id int64

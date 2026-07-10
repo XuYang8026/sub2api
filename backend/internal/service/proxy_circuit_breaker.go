@@ -58,11 +58,11 @@ var (
 // ProxyCircuitBreaker orchestrates the account-level and proxy-level state
 // updates in response to proxy-classifiable errors.
 type ProxyCircuitBreaker struct {
-	accountRepo       AccountRepository
-	proxyRepo         ProxyRepository
-	proxyHealth       ProxyHealthRepository
-	tempUnschedCache  TempUnschedCache // may be nil in tests / when Redis absent
-	runtimeBlocker    RuntimeSchedulingBlocker // may be nil
+	accountRepo      AccountRepository
+	proxyRepo        ProxyRepository
+	proxyHealth      ProxyHealthRepository
+	tempUnschedCache TempUnschedCache         // may be nil in tests / when Redis absent
+	runtimeBlocker   RuntimeSchedulingBlocker // may be nil
 }
 
 // RuntimeSchedulingBlocker is defined in proxy_health_types.go so both the

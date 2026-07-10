@@ -33,7 +33,8 @@ function deepMerge<T extends LocaleMessages>(base: T, ext: LocaleMessages): T {
     ) {
       deepMerge(b as LocaleMessages, v as LocaleMessages)
     } else {
-      ;(base as Record<string, unknown>)[k] = v
+      const target = base as Record<string, unknown>
+      target[k] = v
     }
   }
   return base
