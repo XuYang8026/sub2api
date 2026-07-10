@@ -106,8 +106,35 @@ func RegisterAdminRoutes(
 
 		// 邀请返利（专属用户管理）
 		registerAffiliateRoutes(admin, h)
+
+		// Fork sidecar extensions. See routes_forkext_*.go.
+		applyAdminRouteRegistrars(admin, h)
 	}
 }
+
+// <fork:route-hook>
+// AdminRouteRegistrar registers additional admin routes contributed by fork
+// extensions. Sidecar files register their registrar via
+// RegisterAdminRouteRegistrar (in init()); RegisterAdminRoutes calls them in
+// registration order after all upstream route groups have been mounted.
+type AdminRouteRegistrar func(admin *gin.RouterGroup, h *handler.Handlers)
+
+var adminRouteRegistrars []AdminRouteRegistrar
+
+func RegisterAdminRouteRegistrar(r AdminRouteRegistrar) {
+	if r == nil {
+		return
+	}
+	adminRouteRegistrars = append(adminRouteRegistrars, r)
+}
+
+func applyAdminRouteRegistrars(admin *gin.RouterGroup, h *handler.Handlers) {
+	for _, r := range adminRouteRegistrars {
+		r(admin, h)
+	}
+}
+
+// </fork:route-hook>
 
 func registerAdminComplianceRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	compliance := admin.Group("/compliance")
@@ -413,11 +440,6 @@ func registerProxyRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		proxies.GET("/all", h.Admin.Proxy.GetAll)
 		proxies.GET("/data", h.Admin.Proxy.ExportData)
 		proxies.POST("/data", h.Admin.Proxy.ImportData)
-		// <fork:proxy-circuit-breaker>
-		// Health snapshot for all active proxies (single round-trip).
-		// Frontend polls this to overlay health badges on the proxy table.
-		proxies.GET("/health", h.Admin.Proxy.GetHealth)
-		// </fork>
 		proxies.GET("/:id", h.Admin.Proxy.GetByID)
 		proxies.POST("", h.Admin.Proxy.Create)
 		proxies.PUT("/:id", h.Admin.Proxy.Update)

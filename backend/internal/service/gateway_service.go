@@ -90,6 +90,84 @@ const (
 	cacheTTLTarget1h = "1h"
 )
 
+// <fork:scheduler-hook>
+// SchedulerAccountFilter is a post-selection hook applied to a schedulable
+// account list. Fork extensions register filters via
+// RegisterSchedulerAccountFilter (typically in an init()); upstream should
+// treat the registered slice as an opaque post-processing pipeline and add
+// new call sites via applySchedulerAccountFilters(...).
+type SchedulerAccountFilter func(ctx context.Context, accounts []Account, groupID *int64, platform string) []Account
+
+var schedulerAccountFilters []SchedulerAccountFilter
+
+// RegisterSchedulerAccountFilter appends a filter to the pipeline. Nil filters
+// are ignored. Safe to call from init() (invocation is single-goroutine there).
+func RegisterSchedulerAccountFilter(f SchedulerAccountFilter) {
+	if f == nil {
+		return
+	}
+	schedulerAccountFilters = append(schedulerAccountFilters, f)
+}
+
+func applySchedulerAccountFilters(ctx context.Context, accounts []Account, groupID *int64, platform string) []Account {
+	for _, f := range schedulerAccountFilters {
+		accounts = f(ctx, accounts, groupID, platform)
+	}
+	return accounts
+}
+
+// StickyPreCheck decides whether a sticky-bound account should be evicted
+// BEFORE its usual validity checks run. The hook owns the eviction side
+// effects (log, cache delete) so upstream stays agnostic of the reason.
+// Returns evicted=true when the sticky binding was invalidated by this
+// pre-check; callers must NOT proceed to the normal sticky path in that case.
+//
+// The `path` argument distinguishes the 4 sticky code paths in the scheduler
+// (legacy_routed, native_normal, legacy_mixed_routed, mixed_normal) so hooks
+// can annotate telemetry.
+type StickyPreCheck func(ctx context.Context, account *Account, groupID *int64, sessionHash string, cache GatewayCache, path string) (evicted bool)
+
+var stickyPreChecks []StickyPreCheck
+
+// RegisterStickyPreCheck appends a pre-check to the sticky pipeline.
+func RegisterStickyPreCheck(c StickyPreCheck) {
+	if c == nil {
+		return
+	}
+	stickyPreChecks = append(stickyPreChecks, c)
+}
+
+func applyStickyPreChecks(ctx context.Context, account *Account, groupID *int64, sessionHash string, cache GatewayCache, path string) bool {
+	for _, c := range stickyPreChecks {
+		if c(ctx, account, groupID, sessionHash, cache, path) {
+			return true
+		}
+	}
+	return false
+}
+
+// ForwardFailureHook is invoked when an outbound request via s.httpUpstream
+// fails (before the error is returned to the client). Fork extensions use
+// this to classify the error and update per-account/per-proxy health state.
+type ForwardFailureHook func(ctx context.Context, account *Account, err error)
+
+var forwardFailureHooks []ForwardFailureHook
+
+func RegisterForwardFailureHook(h ForwardFailureHook) {
+	if h == nil {
+		return
+	}
+	forwardFailureHooks = append(forwardFailureHooks, h)
+}
+
+func applyForwardFailureHooks(ctx context.Context, account *Account, err error) {
+	for _, h := range forwardFailureHooks {
+		h(ctx, account, err)
+	}
+}
+
+// </fork:scheduler-hook>
+
 // ForceCacheBillingContextKey 强制缓存计费上下文键
 // 用于粘性会话切换时，将 input_tokens 转为 cache_read_input_tokens 计费
 type forceCacheBillingKeyType struct{}
@@ -2466,9 +2544,7 @@ func (s *GatewayService) listSchedulableAccounts(ctx context.Context, groupID *i
 						"tls_fingerprint", acc.IsTLSFingerprintEnabled())
 				}
 			}
-			// <fork:proxy-circuit-breaker>
-			accounts = s.filterAccountsByProxyHealth(ctx, accounts, groupID, platform)
-			// </fork:proxy-circuit-breaker>
+			accounts = applySchedulerAccountFilters(ctx, accounts, groupID, platform)
 		}
 		return accounts, useMixed, err
 	}
@@ -2514,9 +2590,7 @@ func (s *GatewayService) listSchedulableAccounts(ctx context.Context, groupID *i
 					"tls_fingerprint", acc.IsTLSFingerprintEnabled())
 			}
 		}
-		// <fork:proxy-circuit-breaker>
-		filtered = s.filterAccountsByProxyHealth(ctx, filtered, groupID, platform)
-		// </fork:proxy-circuit-breaker>
+		filtered = applySchedulerAccountFilters(ctx, filtered, groupID, platform)
 		return filtered, useMixed, nil
 	}
 
@@ -2552,71 +2626,9 @@ func (s *GatewayService) listSchedulableAccounts(ctx context.Context, groupID *i
 				"tls_fingerprint", acc.IsTLSFingerprintEnabled())
 		}
 	}
-	// <fork:proxy-circuit-breaker>
-	accounts = s.filterAccountsByProxyHealth(ctx, accounts, groupID, platform)
-	// </fork:proxy-circuit-breaker>
+	accounts = applySchedulerAccountFilters(ctx, accounts, groupID, platform)
 	return accounts, useMixed, nil
 }
-
-// <fork:proxy-circuit-breaker>
-// filterAccountsByProxyHealth removes accounts whose bound proxy is currently
-// tripped by the proxy circuit breaker. Accounts with no bound proxy (direct
-// connection) always pass through. Nil-safe: if the circuit breaker registry
-// is empty, the input list is returned unchanged.
-func (s *GatewayService) filterAccountsByProxyHealth(ctx context.Context, accounts []Account, groupID *int64, platform string) []Account {
-	if len(accounts) == 0 {
-		return accounts
-	}
-	cb := GetProxyCircuitBreaker()
-	if cb == nil {
-		return accounts
-	}
-	proxyIDs := make([]int64, 0, len(accounts))
-	seen := make(map[int64]struct{}, len(accounts))
-	for _, acc := range accounts {
-		if acc.ProxyID == nil {
-			continue
-		}
-		pid := *acc.ProxyID
-		if _, ok := seen[pid]; ok {
-			continue
-		}
-		seen[pid] = struct{}{}
-		proxyIDs = append(proxyIDs, pid)
-	}
-	if len(proxyIDs) == 0 {
-		return accounts
-	}
-	healthyIDs := cb.FilterHealthyProxyIDs(ctx, proxyIDs)
-	if len(healthyIDs) == len(proxyIDs) {
-		// No proxy was unhealthy; short-circuit.
-		return accounts
-	}
-	healthySet := make(map[int64]struct{}, len(healthyIDs))
-	for _, id := range healthyIDs {
-		healthySet[id] = struct{}{}
-	}
-	filtered := make([]Account, 0, len(accounts))
-	for _, acc := range accounts {
-		if acc.ProxyID == nil {
-			filtered = append(filtered, acc)
-			continue
-		}
-		if _, ok := healthySet[*acc.ProxyID]; ok {
-			filtered = append(filtered, acc)
-		}
-	}
-	if len(filtered) < len(accounts) {
-		slog.Info("proxy_cb.scheduler_filtered",
-			"original", len(accounts),
-			"filtered", len(filtered),
-			"platform", platform,
-			"groupID", derefGroupID(groupID))
-	}
-	return filtered
-}
-
-// </fork:proxy-circuit-breaker>
 
 // IsSingleAntigravityAccountGroup 检查指定分组是否只有一个 antigravity 平台的可调度账号。
 // 用于 Handler 层在首次请求时提前设置 SingleAccountRetry context，
@@ -2992,28 +3004,6 @@ func (s *GatewayService) getSchedulableAccount(ctx context.Context, accountID in
 	return s.accountRepo.GetByID(ctx, accountID)
 }
 
-// <fork:proxy-circuit-breaker>
-// isStickyProxyUnhealthy returns true when the sticky-bound account has an
-// outbound proxy attached AND that proxy is currently marked unhealthy by
-// the ProxyCircuitBreaker (either the cron probe tripped it or enough
-// accounts have reported failures). Callers are expected to evict the sticky
-// binding and fall through to normal scheduling.
-//
-// Fail-open: if the breaker/singleton is not installed, or the account has
-// no proxy, this returns false — sticky bindings continue as before.
-func (s *GatewayService) isStickyProxyUnhealthy(ctx context.Context, account *Account) bool {
-	if account == nil || account.ProxyID == nil || *account.ProxyID <= 0 {
-		return false
-	}
-	cb := GetProxyCircuitBreaker()
-	if cb == nil {
-		return false
-	}
-	return cb.IsProxyUnhealthy(ctx, *account.ProxyID)
-}
-
-// </fork>
-
 func (s *GatewayService) hydrateSelectedAccount(ctx context.Context, account *Account) (*Account, error) {
 	if account == nil || s.schedulerSnapshot == nil {
 		return account, nil
@@ -3374,21 +3364,7 @@ func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, 
 					account, err := s.getSchedulableAccount(ctx, accountID)
 					// 检查账号分组归属和平台匹配（确保粘性会话不会跨分组或跨平台）
 					if err == nil {
-						// <fork:proxy-circuit-breaker>
-						// If the sticky account's bound proxy is currently
-						// tripped/unhealthy, evict the sticky binding and fall
-						// through to normal scheduling. Otherwise, we'd pin
-						// this session to a dead proxy for the full sticky TTL.
-						if s.isStickyProxyUnhealthy(ctx, account) {
-							slog.Info("sticky.evicted_proxy_unhealthy",
-								"account_id", account.ID,
-								"proxy_id", derefInt64(account.ProxyID),
-								"session", shortSessionHash(sessionHash),
-								"path", "legacy_routed",
-							)
-							_ = s.cache.DeleteSessionAccountID(ctx, derefGroupID(groupID), sessionHash)
-						} else {
-							// </fork>
+						if !applyStickyPreChecks(ctx, account, groupID, sessionHash, s.cache, "legacy_routed") {
 							clearSticky := shouldClearStickySession(account, requestedModel)
 							if clearSticky {
 								_ = s.cache.DeleteSessionAccountID(ctx, derefGroupID(groupID), sessionHash)
@@ -3399,7 +3375,7 @@ func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, 
 								}
 								return account, nil
 							}
-						} // <fork:proxy-circuit-breaker> close else
+						}
 					}
 				}
 			}
@@ -3509,17 +3485,7 @@ func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, 
 				account, err := s.getSchedulableAccount(ctx, accountID)
 				// 检查账号分组归属和平台匹配（确保粘性会话不会跨分组或跨平台）
 				if err == nil {
-					// <fork:proxy-circuit-breaker>
-					if s.isStickyProxyUnhealthy(ctx, account) {
-						slog.Info("sticky.evicted_proxy_unhealthy",
-							"account_id", account.ID,
-							"proxy_id", derefInt64(account.ProxyID),
-							"session", shortSessionHash(sessionHash),
-							"path", "native_normal",
-						)
-						_ = s.cache.DeleteSessionAccountID(ctx, derefGroupID(groupID), sessionHash)
-					} else {
-						// </fork>
+					if !applyStickyPreChecks(ctx, account, groupID, sessionHash, s.cache, "native_normal") {
 						clearSticky := shouldClearStickySession(account, requestedModel)
 						if clearSticky {
 							_ = s.cache.DeleteSessionAccountID(ctx, derefGroupID(groupID), sessionHash)
@@ -3527,7 +3493,7 @@ func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, 
 						if !clearSticky && s.isAccountInGroup(account, groupID) && account.Platform == platform && (requestedModel == "" || s.isModelSupportedByAccountWithContext(ctx, account, requestedModel)) && s.isAccountSchedulableForModelSelection(ctx, account, requestedModel) && s.isAccountSchedulableForQuota(account) && s.isAccountSchedulableForWindowCost(ctx, account, true) && s.isAccountSchedulableForRPM(ctx, account, true) {
 							return account, nil
 						}
-					} // <fork:proxy-circuit-breaker> close else
+					}
 				}
 			}
 		}
@@ -3660,17 +3626,7 @@ func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, g
 					account, err := s.getSchedulableAccount(ctx, accountID)
 					// 检查账号分组归属和有效性：原生平台直接匹配，antigravity 需要启用混合调度
 					if err == nil {
-						// <fork:proxy-circuit-breaker>
-						if s.isStickyProxyUnhealthy(ctx, account) {
-							slog.Info("sticky.evicted_proxy_unhealthy",
-								"account_id", account.ID,
-								"proxy_id", derefInt64(account.ProxyID),
-								"session", shortSessionHash(sessionHash),
-								"path", "legacy_mixed_routed",
-							)
-							_ = s.cache.DeleteSessionAccountID(ctx, derefGroupID(groupID), sessionHash)
-						} else {
-							// </fork>
+						if !applyStickyPreChecks(ctx, account, groupID, sessionHash, s.cache, "legacy_mixed_routed") {
 							clearSticky := shouldClearStickySession(account, requestedModel)
 							if clearSticky {
 								_ = s.cache.DeleteSessionAccountID(ctx, derefGroupID(groupID), sessionHash)
@@ -3683,7 +3639,7 @@ func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, g
 									return account, nil
 								}
 							}
-						} // <fork:proxy-circuit-breaker> close else
+						}
 					}
 				}
 			}
@@ -3793,17 +3749,7 @@ func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, g
 				account, err := s.getSchedulableAccount(ctx, accountID)
 				// 检查账号分组归属和有效性：原生平台直接匹配，antigravity 需要启用混合调度
 				if err == nil {
-					// <fork:proxy-circuit-breaker>
-					if s.isStickyProxyUnhealthy(ctx, account) {
-						slog.Info("sticky.evicted_proxy_unhealthy",
-							"account_id", account.ID,
-							"proxy_id", derefInt64(account.ProxyID),
-							"session", shortSessionHash(sessionHash),
-							"path", "mixed_normal",
-						)
-						_ = s.cache.DeleteSessionAccountID(ctx, derefGroupID(groupID), sessionHash)
-					} else {
-						// </fork>
+					if !applyStickyPreChecks(ctx, account, groupID, sessionHash, s.cache, "mixed_normal") {
 						clearSticky := shouldClearStickySession(account, requestedModel)
 						if clearSticky {
 							_ = s.cache.DeleteSessionAccountID(ctx, derefGroupID(groupID), sessionHash)
@@ -3813,7 +3759,7 @@ func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, g
 								return account, nil
 							}
 						}
-					} // <fork:proxy-circuit-breaker> close else
+					}
 				}
 			}
 		}
@@ -5293,17 +5239,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 			if resp != nil && resp.Body != nil {
 				_ = resp.Body.Close()
 			}
-			// <fork:proxy-circuit-breaker>
-			// Classify the failure as proxy-attributable (proxyconnect refused
-			// / socks connect / TLS handshake, etc.); if so, mark the account
-			// temp_unschedulable and increment the proxy failure counter.
-			// Non-proxy errors (upstream 5xx wrapped in context canceled) fall
-			// through untouched so the existing upstream_error path handles
-			// them.
-			if cb := GetProxyCircuitBreaker(); cb != nil {
-				cb.HandleAccountProxyError(ctx, account, err)
-			}
-			// </fork>
+			applyForwardFailureHooks(ctx, account, err)
 			// Ensure the client receives an error response (handlers assume Forward writes on non-failover errors).
 			safeErr := sanitizeUpstreamErrorMessage(err.Error())
 			setOpsUpstreamError(c, 0, safeErr, "")

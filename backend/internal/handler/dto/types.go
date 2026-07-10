@@ -302,18 +302,6 @@ type Proxy struct {
 	FallbackMode   string     `json:"fallback_mode"`
 	BackupProxyID  *int64     `json:"backup_proxy_id"`
 	ExpiryWarnDays int        `json:"expiry_warn_days"`
-
-	// <fork:proxy-circuit-breaker>
-	// Optional health snapshot fields populated by admin endpoints that
-	// load ProxyHealthRepository data. All fields use omitempty so
-	// upstream responses (no snapshot injected) remain byte-identical.
-	HealthStatus        *string    `json:"health_status,omitempty"`
-	LastProbedAt        *time.Time `json:"last_probed_at,omitempty"`
-	LastProbeError      *string    `json:"last_probe_error,omitempty"`
-	LastProbeLatencyMs  *int64     `json:"last_probe_latency_ms,omitempty"`
-	ConsecutiveFailures *int       `json:"consecutive_failures,omitempty"`
-	UnhealthySince      *time.Time `json:"unhealthy_since,omitempty"`
-	// </fork>
 }
 
 type ProxyWithAccountCount struct {

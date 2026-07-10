@@ -16,6 +16,34 @@ import (
 // tokenRefreshTempUnschedDuration token 刷新重试耗尽后临时不可调度的持续时间
 const tokenRefreshTempUnschedDuration = 10 * time.Minute
 
+// <fork:token-refresh-hook>
+// TokenRefreshFailureHook is invoked after refreshWithRetry has exhausted all
+// retries but before the default 10-min block is applied. If a hook returns
+// (handled=true), the caller must skip the default block and propagate the
+// original error (the hook is expected to have already applied its own
+// cooldown / observability). Registered via RegisterTokenRefreshFailureHook.
+type TokenRefreshFailureHook func(ctx context.Context, account *Account, lastErr error) (handled bool)
+
+var tokenRefreshFailureHooks []TokenRefreshFailureHook
+
+func RegisterTokenRefreshFailureHook(h TokenRefreshFailureHook) {
+	if h == nil {
+		return
+	}
+	tokenRefreshFailureHooks = append(tokenRefreshFailureHooks, h)
+}
+
+func applyTokenRefreshFailureHooks(ctx context.Context, account *Account, lastErr error) bool {
+	for _, h := range tokenRefreshFailureHooks {
+		if h(ctx, account, lastErr) {
+			return true
+		}
+	}
+	return false
+}
+
+// </fork:token-refresh-hook>
+
 // TokenRefreshService OAuth token自动刷新服务
 // 定期检查并刷新即将过期的token
 type TokenRefreshService struct {
@@ -351,24 +379,9 @@ func (s *TokenRefreshService) refreshWithRetry(ctx context.Context, account *Acc
 	if lastErr != nil {
 		reason += ": " + logredact.RedactText(lastErr.Error())
 	}
-	// <fork:proxy-circuit-breaker>
-	// If the exhausted retry chain was actually caused by proxy failures
-	// (dial refused / socks / TLS handshake), delegate to the circuit
-	// breaker which sets a longer 15-min cooldown *and* increments the
-	// bound proxy's failure counter. Return early to avoid the shorter
-	// 10-min block being overwritten in a race.
-	if lastErr != nil {
-		if cb := GetProxyCircuitBreaker(); cb != nil {
-			if class := cb.HandleAccountProxyError(ctx, account, lastErr); class != ProxyErrorNone {
-				slog.Info("token_refresh.deferred_to_proxy_circuit_breaker",
-					"account_id", account.ID,
-					"class", string(class),
-				)
-				return lastErr
-			}
-		}
+	if applyTokenRefreshFailureHooks(ctx, account, lastErr) {
+		return lastErr
 	}
-	// </fork>
 	s.notifyAccountSchedulingBlocked(account, until, "token_refresh_retry_exhausted")
 	if setErr := s.accountRepo.SetTempUnschedulable(ctx, account.ID, until, reason); setErr != nil {
 		slog.Warn("token_refresh.set_temp_unschedulable_failed",

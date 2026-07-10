@@ -300,14 +300,7 @@
                 <span v-if="row.proxy.country_code" class="text-xs text-gray-500 dark:text-gray-400">
                   ({{ row.proxy.country_code }})
                 </span>
-                <!-- <fork:proxy-circuit-breaker> unhealthy badge -->
-                <span
-                  v-if="accountProxyUnhealthy(row)"
-                  class="inline-flex items-center rounded bg-red-100 px-1.5 py-0.5 text-xs font-medium text-red-700 dark:bg-red-900/40 dark:text-red-300"
-                  :title="row.proxy?.last_probe_error || t('admin.accounts.proxy_unavailable')"
-                >
-                  {{ t('admin.accounts.proxy_unavailable') }}
-                </span>
+                <AccountProxyUnhealthyBadge :proxy-id="row.proxy_id" />
               </div>
               <span v-else class="text-sm text-gray-400 dark:text-dark-500">-</span>
               <div v-if="row.proxy && row.proxy.expires_at" class="flex items-center gap-2 text-xs">
@@ -435,6 +428,9 @@ import ImportDataModal from '@/components/admin/account/ImportDataModal.vue'
 import ReAuthAccountModal from '@/components/admin/account/ReAuthAccountModal.vue'
 import AccountTestModal from '@/components/admin/account/AccountTestModal.vue'
 import AccountStatsModal from '@/components/admin/account/AccountStatsModal.vue'
+// <fork:proxy-circuit-breaker>
+import AccountProxyUnhealthyBadge from '@/components/admin/AccountProxyUnhealthyBadge.vue'
+// </fork>
 import ScheduledTestsPanel from '@/components/admin/account/ScheduledTestsPanel.vue'
 import type { SelectOption } from '@/components/common/Select.vue'
 import AccountStatusIndicator from '@/components/account/AccountStatusIndicator.vue'
@@ -456,22 +452,6 @@ const appStore = useAppStore()
 const authStore = useAuthStore()
 
 const proxies = ref<AccountProxy[]>([])
-// <fork:proxy-circuit-breaker> map of proxy IDs whose current health_status is 'unhealthy'
-const unhealthyProxyIds = computed<Set<number>>(() => {
-  const s = new Set<number>()
-  for (const p of proxies.value) {
-    if (p && p.health_status === 'unhealthy') s.add(p.id)
-  }
-  return s
-})
-// <fork:proxy-circuit-breaker> row-level check: use nested row.proxy when present else global map
-const accountProxyUnhealthy = (row: Account): boolean => {
-  const nested: string | undefined = row.proxy?.health_status
-  if (nested === 'unhealthy') return true
-  if (nested && nested !== 'unhealthy') return false
-  if (row.proxy_id == null) return false
-  return unhealthyProxyIds.value.has(row.proxy_id)
-}
 const groups = ref<AdminGroup[]>([])
 const accountTableRef = ref<HTMLElement | null>(null)
 const dataTableRef = ref<InstanceType<typeof DataTable> | null>(null)

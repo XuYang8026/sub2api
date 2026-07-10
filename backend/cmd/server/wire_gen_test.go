@@ -82,6 +82,7 @@ func TestProvideCleanup_WithMinimalDependencies_NoPanic(t *testing.T) {
 		nil, // channelMonitorRunner
 		nil, // quotaFlusher
 		nil, // scheduledProxyProbe (fork:proxy-circuit-breaker)
+		nil, // proxyCircuitBreaker (fork:proxy-circuit-breaker)
 	)
 
 	require.NotPanics(t, func() {

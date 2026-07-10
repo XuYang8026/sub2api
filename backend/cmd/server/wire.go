@@ -40,6 +40,18 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 		middleware.ProviderSet,
 		handler.ProviderSet,
 
+		// <fork:proxy-circuit-breaker> + <fork:proxy-smart-import>
+		// Fork sidecar ProviderSets. See internal/*/wire_forkext.go.
+		repository.ForkExtSet,
+		service.ForkExtSet,
+		handler.ForkExtSet,
+		// Fork-only wire.Bind entries. Declared here (not inside a
+		// ForkExt ProviderSet) because wire requires the target concrete
+		// type to be reachable from the same set — placing them directly
+		// in wire.Build gives them access to the upstream ProviderSet.
+		wire.Bind(new(service.RuntimeSchedulingBlocker), new(*service.OpenAIGatewayService)),
+		// </fork>
+
 		// Server layer ProviderSet
 		server.ProviderSet,
 
@@ -101,6 +113,13 @@ func provideCleanup(
 	paymentOrderExpiry *service.PaymentOrderExpiryService,
 	channelMonitorRunner *service.ChannelMonitorRunner,
 	quotaFlusher *service.UserPlatformQuotaUsageFlusher,
+	// <fork:proxy-circuit-breaker>
+	scheduledProxyProbe *service.ScheduledProxyProbeService,
+	// proxyCircuitBreaker has no cleanup work but is listed here to force
+	// wire to include the fork provider in the dependency graph (it's
+	// otherwise used only via the global GetProxyCircuitBreaker() singleton).
+	proxyCircuitBreaker *service.ProxyCircuitBreaker,
+	// </fork>
 ) func() {
 	return func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -265,6 +284,20 @@ func provideCleanup(
 				}
 				return nil
 			}},
+			// <fork:proxy-circuit-breaker>
+			{"ScheduledProxyProbeService", func() error {
+				if scheduledProxyProbe != nil {
+					scheduledProxyProbe.Stop()
+				}
+				return nil
+			}},
+			{"ProxyCircuitBreaker", func() error {
+				// No cleanup; parameter exists only so wire keeps the
+				// provider in the dependency graph.
+				_ = proxyCircuitBreaker
+				return nil
+			}},
+			// </fork>
 		}
 
 		infraSteps := []cleanupStep{

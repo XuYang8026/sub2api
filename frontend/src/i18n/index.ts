@@ -12,6 +12,34 @@ const localeLoaders: Record<LocaleCode, () => Promise<{ default: LocaleMessages 
   zh: () => import('./locales/zh')
 }
 
+// <fork:i18n-merge>
+// Fork-only locale extensions. Merged into the main locale by
+// loadLocaleMessages via deepMerge before setLocaleMessage.
+const forkLocaleLoaders: Record<LocaleCode, () => Promise<{ default: LocaleMessages }>> = {
+  en: () => import('./locales/en-fork-ext'),
+  zh: () => import('./locales/zh-fork-ext')
+}
+
+function deepMerge<T extends LocaleMessages>(base: T, ext: LocaleMessages): T {
+  for (const [k, v] of Object.entries(ext)) {
+    const b = (base as Record<string, unknown>)[k]
+    if (
+      v &&
+      typeof v === 'object' &&
+      !Array.isArray(v) &&
+      b &&
+      typeof b === 'object' &&
+      !Array.isArray(b)
+    ) {
+      deepMerge(b as LocaleMessages, v as LocaleMessages)
+    } else {
+      ;(base as Record<string, unknown>)[k] = v
+    }
+  }
+  return base
+}
+// </fork:i18n-merge>
+
 function isLocaleCode(value: string): value is LocaleCode {
   return value === 'en' || value === 'zh'
 }
@@ -49,7 +77,11 @@ export async function loadLocaleMessages(locale: LocaleCode): Promise<void> {
 
   const loader = localeLoaders[locale]
   const module = await loader()
-  i18n.global.setLocaleMessage(locale, module.default)
+  // <fork:i18n-merge> merge fork-only translations into the upstream locale
+  const forkModule = await forkLocaleLoaders[locale]()
+  const merged = deepMerge({ ...module.default }, forkModule.default)
+  i18n.global.setLocaleMessage(locale, merged)
+  // </fork>
   loadedLocales.add(locale)
 }
 

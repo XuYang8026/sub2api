@@ -16,24 +16,12 @@ import (
 // ProxyHandler handles admin proxy management
 type ProxyHandler struct {
 	adminService service.AdminService
-	// <fork:proxy-circuit-breaker>
-	// proxyHealth is the shadow read-model for auto-circuit-breaker columns
-	// (health_status / last_probed_at / …). Optional: nil is tolerated so
-	// tests / minimal wire graphs still compile.
-	proxyHealth service.ProxyHealthRepository
-	// </fork>
 }
 
 // NewProxyHandler creates a new admin proxy handler
-// <fork:proxy-circuit-breaker>
-// proxyHealth added as a second parameter; wire graph passes the shared
-// repository instance. Keeping it in the constructor signature (vs a setter)
-// makes DI failures visible at compile time.
-// </fork>
-func NewProxyHandler(adminService service.AdminService, proxyHealth service.ProxyHealthRepository) *ProxyHandler {
+func NewProxyHandler(adminService service.AdminService) *ProxyHandler {
 	return &ProxyHandler{
 		adminService: adminService,
-		proxyHealth:  proxyHealth,
 	}
 }
 
@@ -88,14 +76,9 @@ func (h *ProxyHandler) List(c *gin.Context) {
 	}
 
 	out := make([]dto.AdminProxyWithAccountCount, 0, len(proxies))
-	// <fork:proxy-circuit-breaker>
-	// Load health snapshots in one round trip so the paginated table can
-	// render health_status without an extra N calls from the frontend.
-	healthMap := h.loadHealthMapForProxiesWithCount(c.Request.Context(), proxies)
 	for i := range proxies {
-		out = append(out, *dto.ProxyWithAccountCountFromServiceAdminWithHealth(&proxies[i], healthMap[proxies[i].ID]))
+		out = append(out, *dto.ProxyWithAccountCountFromServiceAdmin(&proxies[i]))
 	}
-	// </fork>
 	response.Paginated(c, out, total, page, pageSize)
 }
 
@@ -112,12 +95,9 @@ func (h *ProxyHandler) GetAll(c *gin.Context) {
 			return
 		}
 		out := make([]dto.AdminProxyWithAccountCount, 0, len(proxies))
-		// <fork:proxy-circuit-breaker>
-		healthMap := h.loadHealthMapForProxiesWithCount(c.Request.Context(), proxies)
 		for i := range proxies {
-			out = append(out, *dto.ProxyWithAccountCountFromServiceAdminWithHealth(&proxies[i], healthMap[proxies[i].ID]))
+			out = append(out, *dto.ProxyWithAccountCountFromServiceAdmin(&proxies[i]))
 		}
-		// </fork>
 		response.Success(c, out)
 		return
 	}
@@ -129,12 +109,9 @@ func (h *ProxyHandler) GetAll(c *gin.Context) {
 	}
 
 	out := make([]dto.AdminProxy, 0, len(proxies))
-	// <fork:proxy-circuit-breaker>
-	healthMap := h.loadHealthMapForProxies(c.Request.Context(), proxies)
 	for i := range proxies {
-		out = append(out, *dto.ProxyFromServiceAdminWithHealth(&proxies[i], healthMap[proxies[i].ID]))
+		out = append(out, *dto.ProxyFromServiceAdmin(&proxies[i]))
 	}
-	// </fork>
 	response.Success(c, out)
 }
 
@@ -153,116 +130,8 @@ func (h *ProxyHandler) GetByID(c *gin.Context) {
 		return
 	}
 
-	// <fork:proxy-circuit-breaker>
-	// Load the single-row health snapshot so the admin detail view can
-	// display health_status alongside the base proxy fields.
-	var snap *service.ProxyHealthSnapshot
-	if h.proxyHealth != nil && proxy != nil {
-		if s, herr := h.proxyHealth.LoadHealth(c.Request.Context(), proxy.ID); herr == nil {
-			snap = s
-		}
-	}
-	response.Success(c, dto.ProxyFromServiceAdminWithHealth(proxy, snap))
-	// </fork>
+	response.Success(c, dto.ProxyFromServiceAdmin(proxy))
 }
-
-// <fork:proxy-circuit-breaker>
-// loadHealthMapForProxies batches health lookup for a slice of Proxy structs.
-// Returns an empty map on missing repo or empty input to keep call sites
-// branch-free.
-func (h *ProxyHandler) loadHealthMapForProxies(ctx context.Context, proxies []service.Proxy) map[int64]*service.ProxyHealthSnapshot {
-	if h.proxyHealth == nil || len(proxies) == 0 {
-		return map[int64]*service.ProxyHealthSnapshot{}
-	}
-	ids := make([]int64, 0, len(proxies))
-	for i := range proxies {
-		ids = append(ids, proxies[i].ID)
-	}
-	m, err := h.proxyHealth.LoadHealthByIDs(ctx, ids)
-	if err != nil {
-		return map[int64]*service.ProxyHealthSnapshot{}
-	}
-	return m
-}
-
-// loadHealthMapForProxiesWithCount is the ProxyWithAccountCount overload; kept
-// separate to avoid an interface/generics dance in Go 1.20-compatible code.
-func (h *ProxyHandler) loadHealthMapForProxiesWithCount(ctx context.Context, proxies []service.ProxyWithAccountCount) map[int64]*service.ProxyHealthSnapshot {
-	if h.proxyHealth == nil || len(proxies) == 0 {
-		return map[int64]*service.ProxyHealthSnapshot{}
-	}
-	ids := make([]int64, 0, len(proxies))
-	for i := range proxies {
-		ids = append(ids, proxies[i].ID)
-	}
-	m, err := h.proxyHealth.LoadHealthByIDs(ctx, ids)
-	if err != nil {
-		return map[int64]*service.ProxyHealthSnapshot{}
-	}
-	return m
-}
-
-// ProxyHealthResponseItem is the payload shape returned by GET /admin/proxies/health.
-// Matches the frontend contract in frontend/src/api/admin/proxies.ts.
-type ProxyHealthResponseItem struct {
-	ProxyID             int64      `json:"proxy_id"`
-	HealthStatus        string     `json:"health_status"`
-	LastProbedAt        *time.Time `json:"last_probed_at,omitempty"`
-	LastProbeError      string     `json:"last_probe_error,omitempty"`
-	LastProbeLatencyMs  *int64     `json:"last_probe_latency_ms,omitempty"`
-	ConsecutiveFailures int        `json:"consecutive_failures"`
-	UnhealthySince      *time.Time `json:"unhealthy_since,omitempty"`
-}
-
-// GetHealth returns the health snapshot for every currently-active proxy.
-// GET /api/v1/admin/proxies/health
-//
-// Response is a flat array (no pagination) since the fleet is small and the
-// frontend polls this to overlay health badges on the proxy table.
-func (h *ProxyHandler) GetHealth(c *gin.Context) {
-	if h.proxyHealth == nil {
-		response.Success(c, []ProxyHealthResponseItem{})
-		return
-	}
-	ctx := c.Request.Context()
-	ids, err := h.proxyHealth.ListActiveIDs(ctx)
-	if err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
-	if len(ids) == 0 {
-		response.Success(c, []ProxyHealthResponseItem{})
-		return
-	}
-	snaps, err := h.proxyHealth.LoadHealthByIDs(ctx, ids)
-	if err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
-	out := make([]ProxyHealthResponseItem, 0, len(ids))
-	for _, id := range ids {
-		snap, ok := snaps[id]
-		if !ok || snap == nil {
-			out = append(out, ProxyHealthResponseItem{
-				ProxyID:      id,
-				HealthStatus: service.ProxyHealthUnknown,
-			})
-			continue
-		}
-		out = append(out, ProxyHealthResponseItem{
-			ProxyID:             snap.ProxyID,
-			HealthStatus:        snap.Status,
-			LastProbedAt:        snap.LastProbedAt,
-			LastProbeError:      snap.LastProbeError,
-			LastProbeLatencyMs:  snap.LastProbeLatencyMs,
-			ConsecutiveFailures: snap.ConsecutiveFailures,
-			UnhealthySince:      snap.UnhealthySince,
-		})
-	}
-	response.Success(c, out)
-}
-
-// </fork>
 
 // Create handles creating a new proxy
 // POST /api/v1/admin/proxies
@@ -457,58 +326,18 @@ func (h *ProxyHandler) GetProxyAccounts(c *gin.Context) {
 	response.Success(c, out)
 }
 
-// BatchCreateProxyItem represents a single proxy in batch create request.
-// <fork:proxy-smart-import> Protocol is now optional — empty string or "auto"
-// triggers protocol auto-detection (http vs socks5). When detection fails the
-// proxy is saved with protocol="http" (safe default) and the per-item response
-// carries a detection_error field so the UI can surface a warning. Original
-// echoes the caller-supplied raw line so the UI can render the original input
-// unchanged in the result table (falls back to "host:port" if omitted).
+// BatchCreateProxyItem represents a single proxy in batch create request
 type BatchCreateProxyItem struct {
-	Protocol string `json:"protocol"`
+	Protocol string `json:"protocol" binding:"required,oneof=http https socks5 socks5h"`
 	Host     string `json:"host" binding:"required"`
 	Port     int    `json:"port" binding:"required,min=1,max=65535"`
 	Username string `json:"username"`
 	Password string `json:"password"`
-	Original string `json:"original"`
 }
 
 // BatchCreateRequest represents batch create proxies request
 type BatchCreateRequest struct {
 	Proxies []BatchCreateProxyItem `json:"proxies" binding:"required,min=1"`
-}
-
-// BatchCreateResultItem is the per-item outcome returned by BatchCreate.
-// <fork:proxy-smart-import> Status values:
-//   - "created"       — persisted successfully
-//   - "skipped"       — duplicate, transient lookup error, or create-race
-//   - "detect_failed" — auto-detection failed; proxy still saved with fallback
-//     protocol (http) so the row is not lost, but the UI should
-//     flag it so the operator knows the protocol is a guess.
-//
-// Both Error and Reason carry the same message; the pair exists so callers
-// written against either field name work without a breaking rename.
-type BatchCreateResultItem struct {
-	Original          string `json:"original,omitempty"`
-	Host              string `json:"host"`
-	Port              int    `json:"port"`
-	Status            string `json:"status"` // created | skipped | detect_failed
-	Protocol          string `json:"protocol,omitempty"`
-	DetectedProtocol  string `json:"detected_protocol,omitempty"`
-	DetectedLatencyMs int64  `json:"detected_latency_ms,omitempty"`
-	DetectionError    string `json:"detection_error,omitempty"`
-	Error             string `json:"error,omitempty"`
-	Reason            string `json:"reason,omitempty"`
-}
-
-// validBatchProtocols is the set of explicit protocol strings the batch
-// endpoint accepts (in addition to "" and "auto" which trigger detection).
-// <fork:proxy-smart-import>
-var validBatchProtocols = map[string]bool{
-	"http":    true,
-	"https":   true,
-	"socks5":  true,
-	"socks5h": true,
 }
 
 // BatchCreate handles batch creating proxies
@@ -522,82 +351,25 @@ func (h *ProxyHandler) BatchCreate(c *gin.Context) {
 
 	created := 0
 	skipped := 0
-	// <fork:proxy-smart-import> "errored" counts rows whose auto-detection failed
-	// (they are still saved with a fallback protocol, but the operator should
-	// know the protocol is a guess).
-	errored := 0
-	items := make([]BatchCreateResultItem, 0, len(req.Proxies))
-
-	// <fork:proxy-smart-import> setReason writes the same string into both
-	// Error and Reason so old (json:"error") and new (json:"reason") clients
-	// both see the message without a breaking rename.
-	setReason := func(r *BatchCreateResultItem, msg string) {
-		r.Error = msg
-		r.Reason = msg
-	}
 
 	for _, item := range req.Proxies {
 		// Trim all string fields
 		host := strings.TrimSpace(item.Host)
-		protocol := strings.ToLower(strings.TrimSpace(item.Protocol))
+		protocol := strings.TrimSpace(item.Protocol)
 		username := strings.TrimSpace(item.Username)
 		password := strings.TrimSpace(item.Password)
 
-		// <fork:proxy-smart-import> echo caller-supplied original; fall back to
-		// "host:port" so the UI always has something to render.
-		original := strings.TrimSpace(item.Original)
-		if original == "" {
-			original = host + ":" + strconv.Itoa(item.Port)
-		}
-		resultItem := BatchCreateResultItem{Original: original, Host: host, Port: item.Port}
-
-		// <fork:proxy-smart-import> validate protocol (accept "" / "auto" / one of {http,https,socks5,socks5h}).
-		if protocol != "" && protocol != "auto" && !validBatchProtocols[protocol] {
-			resultItem.Status = "skipped"
-			setReason(&resultItem, "unsupported protocol: "+protocol)
-			skipped++
-			items = append(items, resultItem)
-			continue
-		}
-
-		// Check for duplicates (same host, port, username, password).
-		// <fork:proxy-smart-import> A transient error from the duplicate lookup
-		// must not abort the whole batch — surface it on this row and continue,
-		// otherwise a single flaky DB call would blackhole every remaining row.
+		// Check for duplicates (same host, port, username, password)
 		exists, err := h.adminService.CheckProxyExists(c.Request.Context(), host, item.Port, username, password)
 		if err != nil {
-			resultItem.Status = "skipped"
-			setReason(&resultItem, err.Error())
-			skipped++
-			items = append(items, resultItem)
-			continue
-		}
-		if exists {
-			resultItem.Status = "skipped"
-			setReason(&resultItem, "duplicate")
-			skipped++
-			items = append(items, resultItem)
-			continue
+			response.ErrorFrom(c, err)
+			return
 		}
 
-		// <fork:proxy-smart-import> auto-detect protocol when unspecified.
-		detectFailed := false
-		if protocol == "" || protocol == "auto" {
-			det, derr := h.adminService.DetectProxyProtocol(c.Request.Context(), host, item.Port, username, password)
-			if derr != nil {
-				// Detection failed → fall back to http (safe default) and
-				// carry the error into the response so the UI can flag it.
-				resultItem.DetectionError = derr.Error()
-				setReason(&resultItem, derr.Error())
-				protocol = "http"
-				detectFailed = true
-			} else {
-				protocol = det.Protocol
-				resultItem.DetectedProtocol = det.Protocol
-				resultItem.DetectedLatencyMs = det.LatencyMs
-			}
+		if exists {
+			skipped++
+			continue
 		}
-		resultItem.Protocol = protocol
 
 		// Create proxy with default name
 		_, err = h.adminService.CreateProxy(c.Request.Context(), &service.CreateProxyInput{
@@ -609,31 +381,16 @@ func (h *ProxyHandler) BatchCreate(c *gin.Context) {
 			Password: password,
 		})
 		if err != nil {
-			// If creation fails (e.g. race with duplicate check) count as skipped.
-			resultItem.Status = "skipped"
-			setReason(&resultItem, err.Error())
+			// If creation fails due to duplicate, count as skipped
 			skipped++
-			items = append(items, resultItem)
 			continue
 		}
 
-		// <fork:proxy-smart-import> mark rows whose protocol was a guess so the
-		// UI can render a warning badge — but the row was still saved, so it
-		// does NOT count toward "skipped".
-		if detectFailed {
-			resultItem.Status = "detect_failed"
-			errored++
-		} else {
-			resultItem.Status = "created"
-			created++
-		}
-		items = append(items, resultItem)
+		created++
 	}
 
 	response.Success(c, gin.H{
 		"created": created,
 		"skipped": skipped,
-		"errored": errored,
-		"items":   items,
 	})
 }

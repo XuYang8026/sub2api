@@ -256,13 +256,13 @@
           <template #cell-health="{ row }">
             <div class="flex flex-col gap-1">
               <span
-                :class="['badge', healthBadgeClass(row.health_status)]"
-                :title="row.health_status === 'unhealthy' ? (row.last_probe_error || '') : ''"
+                :class="['badge', healthBadgeClass(row.id)]"
+                :title="proxyHealthMap.get(row.id)?.health_status === 'unhealthy' ? (proxyHealthMap.get(row.id)?.last_probe_error || '') : ''"
               >
-                {{ healthBadgeLabel(row.health_status) }}
+                {{ healthBadgeLabel(row.id) }}
               </span>
-              <span v-if="row.last_probed_at" class="text-xs text-gray-500 dark:text-gray-400">
-                {{ formatRelativeTime(row.last_probed_at) }}
+              <span v-if="proxyHealthMap.get(row.id)?.last_probed_at" class="text-xs text-gray-500 dark:text-gray-400">
+                {{ formatRelativeTime(proxyHealthMap.get(row.id)!.last_probed_at!) }}
               </span>
             </div>
           </template>
@@ -1060,6 +1060,11 @@ import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { adminAPI } from '@/api/admin'
+// <fork:proxy-circuit-breaker> + <fork:proxy-smart-import>
+import { smartBatchImport } from '@/api/admin/proxies-fork-ext'
+import { useProxyHealthSnapshot } from '@/composables/useProxyHealthSnapshot'
+import type { ProxyHealthSnapshot } from '@/types/fork-ext'
+// </fork>
 import type { Proxy, ProxyAccountSummary, ProxyProtocol, ProxyQualityCheckResult } from '@/types'
 import type { Column } from '@/components/common/types'
 import AppLayout from '@/components/layout/AppLayout.vue'
@@ -1527,7 +1532,8 @@ const handleBatchCreate = async () => {
 
   submitting.value = true
   try {
-    // <fork:proxy-smart-import> pass original line + optional protocol to backend
+    // <fork:proxy-smart-import> call the smart-import sidecar endpoint
+    // (auto-detect protocol) instead of the strict upstream batch endpoint.
     const payload = batchParseResult.proxies.map((p) => ({
       protocol: p.protocol,
       host: p.host,
@@ -1536,9 +1542,10 @@ const handleBatchCreate = async () => {
       password: p.password || undefined,
       original: p.original
     }))
-    const result = await adminAPI.proxies.batchCreate(payload)
+    const result = await smartBatchImport(payload)
     const created = result.created || 0
     const skipped = result.skipped || 0
+    // </fork:proxy-smart-import>
 
     // <fork:proxy-smart-import> render per-item detected protocol/latency when returned.
     // Fall back gracefully across backend field renames:
@@ -1985,49 +1992,44 @@ const qualityOverallClass = (status?: string) => {
 }
 
 // <fork:proxy-circuit-breaker>
-const healthBadgeClass = (status?: Proxy['health_status']) => {
+// Fork health-column state pulled from the dedicated /admin/proxies/health
+// endpoint (backend no longer decorates dto.Proxy with health fields).
+const { snapshots: proxyHealthSnapshots, refresh: refreshProxyHealth } =
+  useProxyHealthSnapshot()
+
+const proxyHealthMap = computed<Map<number, ProxyHealthSnapshot>>(() => {
+  const m = new Map<number, ProxyHealthSnapshot>()
+  for (const s of proxyHealthSnapshots.value) {
+    m.set(s.proxy_id, s)
+  }
+  return m
+})
+
+const getProxyHealthStatus = (proxyId: number) =>
+  proxyHealthMap.value.get(proxyId)?.health_status
+
+const healthBadgeClass = (proxyId: number) => {
+  const status = getProxyHealthStatus(proxyId)
   if (status === 'healthy') return 'badge-success'
   if (status === 'unhealthy') return 'badge-danger'
   if (status === 'probing') return 'badge-warning'
   return 'badge-gray'
 }
 
-// <fork:proxy-circuit-breaker>
-const healthBadgeLabel = (status?: Proxy['health_status']) => {
+const healthBadgeLabel = (proxyId: number) => {
+  const status = getProxyHealthStatus(proxyId)
   if (status === 'healthy') return t('admin.proxies.health_status.healthy')
   if (status === 'unhealthy') return t('admin.proxies.health_status.unhealthy')
   if (status === 'probing') return t('admin.proxies.health_status.probing')
   return t('admin.proxies.health_status.unknown')
 }
 
-// <fork:proxy-circuit-breaker> refresh health snapshot for a single row after probe
-const applyHealthResultFromTest = (
-  proxyId: number,
-  result: { success: boolean; latency_ms?: number; message?: string } | null
-) => {
-  const target = proxies.value.find((p) => p.id === proxyId)
-  if (!target) return
-  if (!result) {
-    target.health_status = 'unhealthy'
-    return
-  }
-  target.last_probed_at = new Date().toISOString()
-  if (result.success) {
-    target.health_status = 'healthy'
-    target.last_probe_latency_ms = result.latency_ms ?? null
-    target.last_probe_error = undefined
-    target.consecutive_failures = 0
-  } else {
-    target.health_status = 'unhealthy'
-    target.last_probe_error = result.message
-  }
-}
-
-// <fork:proxy-circuit-breaker>
 const handleProbeNow = async (proxy: Proxy) => {
-  const result = await runProxyTest(proxy.id, true)
-  applyHealthResultFromTest(proxy.id, result as any)
+  await runProxyTest(proxy.id, true)
+  // Refresh the snapshot table so the row updates without a full reload.
+  await refreshProxyHealth()
 }
+// </fork:proxy-circuit-breaker>
 
 const qualityOverallLabel = (status?: string) => {
   if (status === 'healthy') return t('admin.proxies.qualityStatusHealthy')

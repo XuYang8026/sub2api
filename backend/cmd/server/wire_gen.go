@@ -51,12 +51,6 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	settingRepository := repository.NewSettingRepository(client)
 	groupRepository := repository.NewGroupRepository(client, db)
 	proxyRepository := repository.NewProxyRepository(client, db)
-	// <fork:proxy-circuit-breaker>
-	// proxyHealthRepository is constructed early so downstream services can
-	// share it; the ProxyCircuitBreaker itself is wired further below where
-	// tempUnschedCache is already in scope.
-	proxyHealthRepository := repository.NewProxyHealthRepository(db)
-	// </fork>
 	settingService := service.ProvideSettingService(settingRepository, groupRepository, proxyRepository, configConfig)
 	emailCache := repository.NewEmailCache(redisClient)
 	emailService := service.NewEmailService(settingRepository, emailCache)
@@ -151,15 +145,6 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	grokOAuthService := service.NewGrokOAuthService(proxyRepository, grokOAuthClient)
 	grokTokenProvider := service.ProvideGrokTokenProvider(accountRepository, geminiTokenCache, grokOAuthService, oAuthRefreshAPI, tempUnschedCache)
 	openAIGatewayService := service.NewOpenAIGatewayService(accountRepository, usageLogRepository, usageBillingRepository, userRepository, userSubscriptionRepository, userGroupRateRepository, gatewayCache, configConfig, schedulerSnapshotService, concurrencyService, billingService, rateLimitService, billingCacheService, httpUpstream, deferredService, openAITokenProvider, grokTokenProvider, modelPricingResolver, channelService, balanceNotifyService, settingService, serviceUserPlatformQuotaRepository)
-	// <fork:proxy-circuit-breaker>
-	// Register the global ProxyCircuitBreaker after openAIGatewayService is
-	// constructed so we can pass it as the RuntimeSchedulingBlocker. The
-	// gateway service already implements BlockAccountScheduling(*Account,
-	// time.Time, string) to notify the scheduler snapshot, matching the
-	// existing 401/429 fast-path semantics used elsewhere in the fork.
-	proxyCircuitBreaker := service.NewProxyCircuitBreaker(accountRepository, proxyRepository, proxyHealthRepository, tempUnschedCache, openAIGatewayService)
-	service.SetProxyCircuitBreaker(proxyCircuitBreaker)
-	// </fork>
 	geminiOAuthClient := repository.NewGeminiOAuthClient(configConfig)
 	geminiCliCodeAssistClient := repository.NewGeminiCliCodeAssistClient()
 	driveClient := repository.NewGeminiDriveClient()
@@ -216,11 +201,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	antigravityOAuthHandler := admin.NewAntigravityOAuthHandler(antigravityOAuthService)
 	grokQuotaService := service.ProvideGrokQuotaService(accountRepository, proxyRepository, grokTokenProvider, httpUpstream)
 	grokOAuthHandler := admin.NewGrokOAuthHandler(grokOAuthService, adminService, grokQuotaService)
-	// <fork:proxy-circuit-breaker>
-	// Pass the shared proxyHealthRepository so admin proxy endpoints can
-	// batch-load health snapshots and serve GET /admin/proxies/health.
-	proxyHandler := admin.NewProxyHandler(adminService, proxyHealthRepository)
-	// </fork>
+	proxyHandler := admin.NewProxyHandler(adminService)
 	adminRedeemHandler := admin.NewRedeemHandler(adminService, redeemService)
 	promoHandler := admin.NewPromoHandler(promoService)
 	encryptionKey, err := payment.ProvideEncryptionKey(configConfig)
@@ -267,7 +248,12 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	paymentHandler := admin.NewPaymentHandler(paymentService, paymentConfigService)
 	affiliateHandler := admin.NewAffiliateHandler(affiliateService, adminService)
 	complianceHandler := admin.NewComplianceHandler(settingService)
-	adminHandlers := handler.ProvideAdminHandlers(dashboardHandler, adminUserHandler, groupHandler, accountHandler, adminAnnouncementHandler, dataManagementHandler, backupHandler, oAuthHandler, openAIOAuthHandler, geminiOAuthHandler, antigravityOAuthHandler, grokOAuthHandler, proxyHandler, adminRedeemHandler, promoHandler, settingHandler, opsHandler, systemHandler, adminSubscriptionHandler, adminUsageHandler, userAttributeHandler, errorPassthroughHandler, tlsFingerprintProfileHandler, adminAPIKeyHandler, scheduledTestHandler, channelHandler, channelMonitorHandler, channelMonitorRequestTemplateHandler, contentModerationHandler, paymentHandler, affiliateHandler, complianceHandler)
+	proxyHealthRepository := repository.NewProxyHealthRepository(db)
+	proxyHealthHandler := admin.NewProxyHealthHandler(proxyHealthRepository)
+	proxyProtocolDetector := service.ProvideProxyProtocolDetector(adminService)
+	proxySmartImportHandler := admin.NewProxySmartImportHandler(adminService, proxyProtocolDetector)
+	adminHandlersForkExt := handler.NewAdminHandlersForkExt(proxyHealthHandler, proxySmartImportHandler)
+	adminHandlers := handler.ProvideAdminHandlers(dashboardHandler, adminUserHandler, groupHandler, accountHandler, adminAnnouncementHandler, dataManagementHandler, backupHandler, oAuthHandler, openAIOAuthHandler, geminiOAuthHandler, antigravityOAuthHandler, grokOAuthHandler, proxyHandler, adminRedeemHandler, promoHandler, settingHandler, opsHandler, systemHandler, adminSubscriptionHandler, adminUsageHandler, userAttributeHandler, errorPassthroughHandler, tlsFingerprintProfileHandler, adminAPIKeyHandler, scheduledTestHandler, channelHandler, channelMonitorHandler, channelMonitorRequestTemplateHandler, contentModerationHandler, paymentHandler, affiliateHandler, complianceHandler, adminHandlersForkExt)
 	usageRecordWorkerPool := service.NewUsageRecordWorkerPool(configConfig)
 	userMsgQueueCache := repository.NewUserMsgQueueCache(redisClient)
 	userMessageQueueService := service.ProvideUserMessageQueueService(userMsgQueueCache, rpmCache, configConfig)
@@ -296,16 +282,12 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	proxyExpiryService := service.ProvideProxyExpiryService(proxyRepository)
 	subscriptionExpiryService := service.ProvideSubscriptionExpiryService(userSubscriptionRepository, settingRepository, notificationEmailService, leaderLockCache, db)
 	scheduledTestRunnerService := service.ProvideScheduledTestRunnerService(scheduledTestPlanRepository, scheduledTestService, accountTestService, rateLimitService, configConfig)
-	// <fork:proxy-circuit-breaker>
-	// Start the periodic proxy health probe. Fires an immediate first pass so
-	// cold-start doesn't leave all proxies at 'unknown' for a full interval.
-	scheduledProxyProbeService := service.NewScheduledProxyProbeService(proxyHealthRepository, proxyRepository, proxyExitInfoProber, 5*time.Minute)
-	scheduledProxyProbeService.Start()
-	// </fork>
 	paymentOrderExpiryService := service.ProvidePaymentOrderExpiryService(paymentService, leaderLockCache, db)
 	channelMonitorRunner := service.ProvideChannelMonitorRunner(channelMonitorService, settingService)
 	userPlatformQuotaUsageFlusher := service.ProvideUserPlatformQuotaUsageFlusher(configConfig, billingCache, serviceUserPlatformQuotaRepository, timingWheelService)
-	v := provideCleanup(client, redisClient, opsMetricsCollector, opsAggregationService, opsAlertEvaluatorService, opsCleanupService, opsScheduledReportService, opsSystemLogSink, schedulerSnapshotService, tokenRefreshService, accountExpiryService, proxyExpiryService, subscriptionExpiryService, usageCleanupService, idempotencyCleanupService, pricingService, emailQueueService, billingCacheService, usageRecordWorkerPool, subscriptionService, oAuthService, openAIOAuthService, geminiOAuthService, antigravityOAuthService, grokOAuthService, openAIGatewayService, scheduledTestRunnerService, backupService, paymentOrderExpiryService, channelMonitorRunner, userPlatformQuotaUsageFlusher, scheduledProxyProbeService)
+	scheduledProxyProbeService := service.ProvideScheduledProxyProbeService(proxyHealthRepository, proxyRepository, proxyExitInfoProber)
+	proxyCircuitBreaker := service.ProvideProxyCircuitBreakerAndRegister(accountRepository, proxyRepository, proxyHealthRepository, tempUnschedCache, openAIGatewayService)
+	v := provideCleanup(client, redisClient, opsMetricsCollector, opsAggregationService, opsAlertEvaluatorService, opsCleanupService, opsScheduledReportService, opsSystemLogSink, schedulerSnapshotService, tokenRefreshService, accountExpiryService, proxyExpiryService, subscriptionExpiryService, usageCleanupService, idempotencyCleanupService, pricingService, emailQueueService, billingCacheService, usageRecordWorkerPool, subscriptionService, oAuthService, openAIOAuthService, geminiOAuthService, antigravityOAuthService, grokOAuthService, openAIGatewayService, scheduledTestRunnerService, backupService, paymentOrderExpiryService, channelMonitorRunner, userPlatformQuotaUsageFlusher, scheduledProxyProbeService, proxyCircuitBreaker)
 	application := &Application{
 		Server:  httpServer,
 		Cleanup: v,
@@ -363,9 +345,11 @@ func provideCleanup(
 	paymentOrderExpiry *service.PaymentOrderExpiryService,
 	channelMonitorRunner *service.ChannelMonitorRunner,
 	quotaFlusher *service.UserPlatformQuotaUsageFlusher,
-	// <fork:proxy-circuit-breaker>
+
 	scheduledProxyProbe *service.ScheduledProxyProbeService,
-	// </fork>
+
+	proxyCircuitBreaker *service.ProxyCircuitBreaker,
+
 ) func() {
 	return func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -529,14 +513,18 @@ func provideCleanup(
 				}
 				return nil
 			}},
-			// <fork:proxy-circuit-breaker>
+
 			{"ScheduledProxyProbeService", func() error {
 				if scheduledProxyProbe != nil {
 					scheduledProxyProbe.Stop()
 				}
 				return nil
 			}},
-			// </fork>
+			{"ProxyCircuitBreaker", func() error {
+
+				_ = proxyCircuitBreaker
+				return nil
+			}},
 		}
 
 		infraSteps := []cleanupStep{

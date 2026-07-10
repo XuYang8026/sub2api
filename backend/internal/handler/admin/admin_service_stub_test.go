@@ -508,11 +508,6 @@ func (s *stubAdminService) CheckProxyExists(ctx context.Context, host string, po
 	return false, nil
 }
 
-// <fork:proxy-smart-import>
-func (s *stubAdminService) DetectProxyProtocol(ctx context.Context, host string, port int, username, password string) (*service.ProxyProtocolDetectResult, error) {
-	return &service.ProxyProtocolDetectResult{Protocol: "http", LatencyMs: 42}, nil
-}
-
 func (s *stubAdminService) TestProxy(ctx context.Context, id int64) (*service.ProxyTestResult, error) {
 	s.mu.Lock()
 	s.testedProxyIDs = append(s.testedProxyIDs, id)

@@ -41,6 +41,9 @@ func ProvideAdminHandlers(
 	paymentHandler *admin.PaymentHandler,
 	affiliateHandler *admin.AffiliateHandler,
 	complianceHandler *admin.ComplianceHandler,
+	// <fork:proxy-circuit-breaker> + <fork:proxy-smart-import>
+	forkExt *AdminHandlersForkExt,
+	// </fork>
 ) *AdminHandlers {
 	return &AdminHandlers{
 		Dashboard:              dashboardHandler,
@@ -75,6 +78,7 @@ func ProvideAdminHandlers(
 		Payment:                paymentHandler,
 		Affiliate:              affiliateHandler,
 		Compliance:             complianceHandler,
+		ForkExt:                forkExt, // <fork>
 	}
 }
 

@@ -38,6 +38,10 @@ type AdminHandlers struct {
 	Payment                *admin.PaymentHandler
 	Affiliate              *admin.AffiliateHandler
 	Compliance             *admin.ComplianceHandler
+	// <fork:proxy-circuit-breaker> + <fork:proxy-smart-import>
+	// ForkExt carries handlers added by fork extensions. Optional; nil is
+	// tolerated so tests / minimal wire graphs still compile.
+	ForkExt *AdminHandlersForkExt
 }
 
 // Handlers contains all HTTP handlers

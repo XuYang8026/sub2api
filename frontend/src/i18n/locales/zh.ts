@@ -3627,8 +3627,6 @@ export default {
       revertProxy: '切回原代理',
       revertProxySuccess: '已成功切回原代理',
       revertProxyFailed: '切回原代理失败',
-      // <fork:proxy-circuit-breaker>
-      proxy_unavailable: '代理不可用',
       createSparkShadow: '创建 Spark 影子账号',
       createSparkShadowConfirm: '为「{name}」创建链接型 Spark 影子账号?影子共享母账号凭据、仅服务 spark 模型。',
       createSparkShadowSuccess: 'Spark 影子账号已创建',
@@ -4501,7 +4499,6 @@ export default {
         status: '状态',
         accounts: '账号数',
         latency: '延迟',
-        health: '健康',
         expiry: '有效期',
         createdAt: '创建时间',
         actions: '操作',
@@ -4654,27 +4651,6 @@ export default {
       fallbackProxy: '指定备用代理',
       fallbackDirect: '回退直连',
       backupProxy: '备用代理',
-      // <fork:proxy-circuit-breaker>
-      health_status: {
-        healthy: '健康',
-        unhealthy: '不可用',
-        unknown: '未探测',
-        probing: '探测中'
-      },
-      probe_now: '立即探测',
-      // <fork:proxy-smart-import>
-      auto_detect_protocol: '自动探测',
-      batch_import_result_title: '导入结果',
-      batch_import_detected_protocol: '检测到协议：{protocol}',
-      batch_import_latency_ms: '{latency}ms',
-      // <fork:proxy-smart-import> 导入结果状态标签（detect_failed = 已保存但协议为回落值，
-      // 使用琥珀色 warning 徽章提示运维再核对）。
-      batch_status: {
-        created: '已创建',
-        skipped: '已跳过',
-        detect_failed: '自动探测失败',
-        failed: '失败'
-      },
     },
 
     // Redeem Codes Management
