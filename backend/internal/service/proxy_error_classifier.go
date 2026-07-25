@@ -106,7 +106,7 @@ func ClassifyProxyError(err error) ProxyErrorClass {
 		return ProxyErrorNone
 	}
 
-	hasProxyContext := containsAny(msg, proxyContextMarkers)
+	hasProxyContext := containsAnyOf(msg, proxyContextMarkers)
 
 	// Rule 2: TLS handshake mismatch is always a proxy-level classify.
 	if strings.Contains(msg, "tls: first record does not look like a tls handshake") {
@@ -115,7 +115,7 @@ func ClassifyProxyError(err error) ProxyErrorClass {
 
 	// Rule 1: definitively non-proxy messages get filtered out unless proxy
 	// context is explicit.
-	if !hasProxyContext && containsAny(msg, nonProxyExactMatches) {
+	if !hasProxyContext && containsAnyOf(msg, nonProxyExactMatches) {
 		return ProxyErrorNone
 	}
 
@@ -199,7 +199,7 @@ func classLabelZh(c ProxyErrorClass) string {
 	}
 }
 
-func containsAny(haystack string, needles []string) bool {
+func containsAnyOf(haystack string, needles []string) bool {
 	for _, n := range needles {
 		if n == "" {
 			continue
