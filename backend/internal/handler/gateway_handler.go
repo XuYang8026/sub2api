@@ -1040,6 +1040,7 @@ func (h *GatewayHandler) Models(c *gin.Context) {
 
 	// Get available models from account configurations for the selected group platform.
 	availableModels := h.gatewayService.GetAvailableModels(c.Request.Context(), groupID, platform)
+	availableModels = forkMergeChannelModels(c.Request.Context(), availableModels, groupID, platform) // <fork:models-list>
 	if apiKey != nil && apiKey.Group != nil && apiKey.Group.CustomModelsListEnabled() {
 		fallbackModels := defaultModelIDsForPlatform(platform)
 		availableModels = filterModelsByCustomList(customModelsListSource(platform, availableModels, fallbackModels), fallbackModels, apiKey.Group.ModelsListConfig.Models)

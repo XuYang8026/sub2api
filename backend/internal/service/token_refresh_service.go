@@ -79,6 +79,7 @@ type GrokOAuthRefreshMutationRepository interface {
 	SetGrokOAuthRefreshErrorIfCredentialsUnchanged(ctx context.Context, id int64, expectedCredentials map[string]any, expectedProxyID *int64, errorMsg string) (bool, error)
 	SetGrokOAuthRefreshTempUnschedulableIfCredentialsUnchanged(ctx context.Context, id int64, expectedCredentials map[string]any, expectedProxyID *int64, until time.Time, reason string) (bool, error)
 }
+
 // TokenRefreshService OAuth token自动刷新服务
 // 定期检查并刷新即将过期的token
 type TokenRefreshService struct {

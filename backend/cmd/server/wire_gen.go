@@ -324,7 +324,8 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	channelMonitorRunner := service.ProvideChannelMonitorRunner(channelMonitorService, settingService)
 	userPlatformQuotaUsageFlusher := service.ProvideUserPlatformQuotaUsageFlusher(configConfig, billingCache, serviceUserPlatformQuotaRepository, timingWheelService)
 	scheduledProxyProbeService := service.ProvideScheduledProxyProbeService(proxyHealthRepository, proxyRepository, proxyExitInfoProber)
-	proxyCircuitBreaker := service.ProvideProxyCircuitBreakerAndRegister(accountRepository, proxyRepository, proxyHealthRepository, tempUnschedCache, openAIGatewayService)
+	forkModelsListRegistration := service.ProvideForkModelsListRegistration(channelService)
+	proxyCircuitBreaker := service.ProvideProxyCircuitBreakerAndRegister(accountRepository, proxyRepository, proxyHealthRepository, tempUnschedCache, openAIGatewayService, forkModelsListRegistration)
 	v := provideCleanup(client, redisClient, opsMetricsCollector, opsAggregationService, opsAlertEvaluatorService, opsCleanupService, opsScheduledReportService, opsSystemLogSink, opsService, opsIngressRejectAggregator, apiKeyService, authCacheInvalidationWorker, schedulerSnapshotService, tokenRefreshService, accountExpiryService, proxyExpiryService, subscriptionExpiryService, usageCleanupService, idempotencyCleanupService, batchImageCleanupService, batchImageWorkerRuntime, pricingService, emailQueueService, billingCacheService, usageRecordWorkerPool, subscriptionService, oAuthService, openAIOAuthService, geminiOAuthService, antigravityOAuthService, grokOAuthService, openAIGatewayService, scheduledTestRunnerService, backupService, paymentOrderExpiryService, channelMonitorRunner, userPlatformQuotaUsageFlusher, scheduledProxyProbeService, proxyCircuitBreaker, upstreamBillingProbeService, ollamaCloudUsageService, auditLogService, promptService)
 	application := &Application{
 		Server:      httpServer,

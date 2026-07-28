@@ -16,6 +16,7 @@ var ForkExtSet = wire.NewSet(
 	ProvideProxyCircuitBreakerAndRegister,
 	ProvideScheduledProxyProbeService,
 	ProvideProxyProtocolDetector,
+	ProvideForkModelsListRegistration,
 )
 
 // ProvideProxyProtocolDetector adapts the exported AdminService interface to
@@ -36,12 +37,19 @@ func ProvideProxyProtocolDetector(admin AdminService) ProxyProtocolDetector {
 // registers it as the global singleton so scheduler filters / sticky
 // pre-checks / forward failure hooks (registered from forkext_*.go files
 // via init()) can look it up without a wire dependency of their own.
+//
+// The ForkModelsListRegistration parameter is unused: it exists so wire keeps
+// ProvideForkModelsListRegistration in the dependency graph. That provider is
+// only consumed through a package-level singleton (see forkext_models_list.go),
+// and this is the sole fork provider guaranteed to be constructed, so hanging
+// the dependency here avoids editing cmd/server/wire.go.
 func ProvideProxyCircuitBreakerAndRegister(
 	accountRepo AccountRepository,
 	proxyRepo ProxyRepository,
 	proxyHealth ProxyHealthRepository,
 	tempUnschedCache TempUnschedCache,
 	runtimeBlocker RuntimeSchedulingBlocker,
+	_ ForkModelsListRegistration,
 ) *ProxyCircuitBreaker {
 	cb := NewProxyCircuitBreaker(accountRepo, proxyRepo, proxyHealth, tempUnschedCache, runtimeBlocker)
 	SetProxyCircuitBreaker(cb)

@@ -64,6 +64,7 @@ func (s *adminServiceImpl) GetGroupModelsListCandidates(ctx context.Context, id 
 	}
 
 	candidates := defaultModelsListCandidateIDs(platform)
+	candidates = forkAppendChannelModels(ctx, candidates, id, platform) // <fork:models-list>
 	if id <= 0 || s.accountRepo == nil {
 		return candidates, nil
 	}
