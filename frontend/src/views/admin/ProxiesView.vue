@@ -1396,6 +1396,7 @@ const handleDataImported = () => {
 // <fork:proxy-smart-import>
 // Supported formats (per line):
 //   1. Full URL:                proto://[user:pass@]host:port  (proto: http/https/socks5/socks5h)
+//      (host may be a domain, IPv4, or bracketed IPv6 like [2001:db8::1])
 //   2. Bare host:port:          host:port  (protocol left blank → backend auto-detects)
 //   3. host:port with auth URL: user:pass@host:port
 //   4. Colon-separated:         host:port:user:pass
@@ -1418,15 +1419,20 @@ const parseProxyUrl = (
   const original = trimmed
 
   // Format 1: protocol://[user:pass@]host:port
-  const urlRegex = /^(https?|socks5h?):\/\/(?:([^:@/]+)(?::([^@/]*))?@)?([^:/@]+):(\d+)$/i
-  const urlMatch = trimmed.match(urlRegex)
+  // Host alternatives: [bracketed-IPv6] | hostname/IPv4 (colon-free, so the
+  // match stops before the final :port). Password is optional.
+  const regex =
+    /^(https?|socks5h?):\/\/(?:([^:@/\[\]]+)(?::([^@/\[\]]*))?@)?(\[[0-9a-f:.]+\]|[^:/@\[\]]+):(\d+)$/i
+  const urlMatch = trimmed.match(regex)
   if (urlMatch) {
-    const [, protocol, username, password, host, portStr] = urlMatch
+    const [, protocol, username, password, rawHost, portStr] = urlMatch
     const port = parseInt(portStr, 10)
     if (!portOK(port)) return null
+    // Strip brackets from IPv6 literals; the backend re-brackets via net.JoinHostPort.
+    const host = rawHost.replace(/^\[|\]$/g, '').trim()
     return {
       protocol: protocol.toLowerCase() as ProxyProtocol,
-      host: host.trim(),
+      host,
       port,
       username: username?.trim() || '',
       password: password?.trim() || '',

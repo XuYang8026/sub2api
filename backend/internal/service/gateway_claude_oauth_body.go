@@ -391,6 +391,7 @@ func (s *GatewayService) applyClaudeCodeOAuthMimicryToBody(
 	systemPromptInjectionEnabled, systemPrompt, systemPromptBlocks := s.claudeOAuthSystemPromptInjectionSettings(ctx)
 	systemRewritten := false
 	if systemPromptInjectionEnabled {
+		systemPromptBlocks = claudeOAuthSystemPromptBlocksForModel(model, systemPromptBlocks)
 		body = rewriteSystemForNonClaudeCodeWithPromptBlocks(body, normalizeSystemParam(systemRaw), systemPrompt, systemPromptBlocks)
 		systemRewritten = true
 	}
@@ -698,6 +699,24 @@ type claudeOAuthSystemPromptBlocksEnvelope struct {
 	Blocks []claudeOAuthSystemPromptBlockConfig `json:"blocks"`
 }
 
+// claudeFableOAuthSystemPromptBlocks keeps the Claude Code identity required by
+// OAuth credentials without the generic CLI expansion block. Fable 5 rejects
+// that expansion upstream with stop_reason=refusal and zero output tokens,
+// while the native billing + identity shape is accepted. Original client
+// system instructions are still migrated into the message history by
+// rewriteSystemForNonClaudeCodeWithPromptBlocks.
+const claudeFableOAuthSystemPromptBlocks = `[
+	{"type":"text","text":"{billing_header}"},
+	{"type":"text","text":"{claude_code_system_prompt}"}
+]`
+
+func claudeOAuthSystemPromptBlocksForModel(model, configured string) string {
+	if isAnthropicFableModel(model) {
+		return claudeFableOAuthSystemPromptBlocks
+	}
+	return configured
+}
+
 func defaultClaudeOAuthExpansionPrompt(expansionPrompt string) string {
 	expansionPrompt = strings.TrimSpace(expansionPrompt)
 	if expansionPrompt == "" {
@@ -751,14 +770,14 @@ func expandClaudeOAuthSystemPromptTextTemplate(body []byte, text string, expansi
 		return "", nil
 	}
 	expansionPrompt = defaultClaudeOAuthExpansionPrompt(expansionPrompt)
-	billingText, err := buildBillingAttributionText(body, claude.CLICurrentVersion)
+	billingText, err := buildBillingAttributionText(body, claude.CLIVersion())
 	if err != nil {
 		return "", err
 	}
-	fp := computeClaudeCodeFingerprint(body, claude.CLICurrentVersion)
+	fp := computeClaudeCodeFingerprint(body, claude.CLIVersion())
 	replacer := strings.NewReplacer(
 		"{billing_header}", billingText,
-		"{cc_version}", claude.CLICurrentVersion,
+		"{cc_version}", claude.CLIVersion(),
 		"{fp}", fp,
 		"{claude_code_system_prompt}", claudeCodeSystemPrompt,
 		"{claude_code_expansion_prompt}", expansionPrompt,
@@ -854,26 +873,42 @@ func ValidateClaudeOAuthSystemPromptBlocksConfig(raw string) error {
 	return nil
 }
 
+func extractSystemTextAndCacheControl(system any) (string, any) {
+	switch v := system.(type) {
+	case string:
+		return strings.TrimSpace(v), nil
+	case []any:
+		var parts []string
+		var cacheControl any
+		for _, item := range v {
+			m, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			text, ok := m["text"].(string)
+			if !ok || strings.TrimSpace(text) == "" {
+				continue
+			}
+			parts = append(parts, text)
+			// system blocks are collapsed into one messages text block below.
+			// Preserve the last original breakpoint as the closest equivalent
+			// boundary, including its client-selected TTL.
+			if cc, exists := m["cache_control"]; exists && cc != nil {
+				cacheControl = cc
+			}
+		}
+		return strings.Join(parts, "\n\n"), cacheControl
+	default:
+		return "", nil
+	}
+}
+
 func rewriteSystemForNonClaudeCodeWithPromptBlocks(body []byte, system any, expansionPrompt string, blocksConfig string) []byte {
 	system = normalizeSystemParam(system)
 	expansionPrompt = defaultClaudeOAuthExpansionPrompt(expansionPrompt)
 
-	// 1. 提取原始 system prompt 文本
-	var originalSystemText string
-	switch v := system.(type) {
-	case string:
-		originalSystemText = strings.TrimSpace(v)
-	case []any:
-		var parts []string
-		for _, item := range v {
-			if m, ok := item.(map[string]any); ok {
-				if text, ok := m["text"].(string); ok && strings.TrimSpace(text) != "" {
-					parts = append(parts, text)
-				}
-			}
-		}
-		originalSystemText = strings.Join(parts, "\n\n")
-	}
+	// 1. 提取原始 system prompt 文本及其缓存断点
+	originalSystemText, originalSystemCacheControl := extractSystemTextAndCacheControl(system)
 
 	// 2. 构造 system 数组，对齐真实 Claude Code CLI 的 3-block 形态：
 	//    [0] billing attribution block（cc_version={cliVer}.{fp}; cc_entrypoint=cli;）
@@ -906,10 +941,17 @@ func rewriteSystemForNonClaudeCodeWithPromptBlocks(body []byte, system any, expa
 	//    模型仍通过 messages 接收完整指令，保留客户端功能
 	ccPromptTrimmed := strings.TrimSpace(claudeCodeSystemPrompt)
 	if originalSystemText != "" && originalSystemText != ccPromptTrimmed && !hasClaudeCodePrefix(originalSystemText) {
+		instructionBlock := map[string]any{
+			"type": "text",
+			"text": "[System Instructions]\n" + originalSystemText,
+		}
+		if originalSystemCacheControl != nil {
+			instructionBlock["cache_control"] = originalSystemCacheControl
+		}
 		instrMsg, err1 := json.Marshal(map[string]any{
 			"role": "user",
 			"content": []map[string]any{
-				{"type": "text", "text": "[System Instructions]\n" + originalSystemText},
+				instructionBlock,
 			},
 		})
 		ackMsg, err2 := json.Marshal(map[string]any{
