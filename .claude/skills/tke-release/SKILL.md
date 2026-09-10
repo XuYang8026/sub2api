@@ -297,8 +297,10 @@ curl -fsS --retry 6 --retry-delay 5 --retry-connrefused https://sub2api.tokensol
 KC=~/.kube/tokensolo.config
 
 # 1. 日志巡检（部署后 2 分钟内）——抓 panic / 启动失败 / 迁移异常
-kubectl --kubeconfig $KC logs -n tokensolo deployment/sub2api --tail=200 2>&1 | wc -l    # 先确认日志非空
-kubectl --kubeconfig $KC logs -n tokensolo deployment/sub2api --tail=200 2>&1 \
+# ⚠️ 滚动刚结束时 deployment/sub2api 可能选到 Terminating 的旧 Pod，用 label + Running 过滤选新 Pod
+POD=$(kubectl --kubeconfig $KC get pods -n tokensolo -l app=sub2api --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}')
+kubectl --kubeconfig $KC logs -n tokensolo $POD --tail=200 2>&1 | wc -l    # 先确认日志非空
+kubectl --kubeconfig $KC logs -n tokensolo $POD --tail=200 2>&1 \
   | grep -iE "panic|nil pointer|runtime error|Auto setup failed|Failed to start server|checksum mismatch" | head -20
 
 # 2. Pod 状态确认（label 是 app=sub2api）
@@ -307,7 +309,7 @@ kubectl --kubeconfig $KC get pods -n tokensolo -l app=sub2api -o wide
 
 - 健康检查 200 且日志无 panic → 继续 Phase 4
 - 发现 `panic` / `nil pointer` / Pod 反复 CrashLoopBackOff / 高频 5xx → **立即执行致命红线（见 Phase 5 回滚命令）→ 复测 → 进入 Phase 5。禁止先分析日志详情。**
-- 零星 `"level":"error"` 业务错误（上游账号 401/429、模型不支持等）属正常波动，继续 Phase 4
+- 零星 `"level":"ERROR"` 业务错误（上游账号 401/429、模型不支持等）属正常波动，继续 Phase 4
 
 **完成后必须先输出一句醒目结论**：「✅ 部署已完成，服务健康（健康检查 200 / 日志零 panic），后续仅剩冒烟测试与后台监控」——不能只靠进度面板体现。P4/P6 可能持续十几分钟且中途交互稀疏，缺这句用户会把等待期误判为流程卡死。然后输出进度面板（P1-P3 ✅，P4 🔄 即将启动）。
 
@@ -512,31 +514,35 @@ git checkout <panic-commit>
 
 ### 主信号：kubectl logs（每轮必做）
 
-sub2api 日志是 zap JSON（`"level":"error"` / `"level":"warn"`），与 tokensolo 的 `type:access` + `status` 字段体系不同。**每轮从监控起点查到当前**（固定起点，不用滑动窗口）：
+sub2api 日志是 zap JSON，`level` 取值**大写**（`"level":"ERROR"` / `"WARN"` / `"INFO"`，2026-09-10 首发实测），与 tokensolo 的 `type:access` + `status` 字段体系不同。**每轮从监控起点查到当前**（固定起点，不用滑动窗口）：
 
 ```bash
 KC=~/.kube/tokensolo.config
 SINCE=<监控起始 RFC3339>
+# ⚠️ 滚动刚结束时 deployment/sub2api 可能选到 Terminating 的旧 Pod，用 label 选 Running 的新 Pod
+POD=$(kubectl --kubeconfig $KC get pods -n tokensolo -l app=sub2api --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}')
 
 # 0. sanity：日志非空（空输出 ≠ 干净）
-kubectl --kubeconfig $KC logs -n tokensolo deployment/sub2api --since-time=$SINCE 2>&1 | wc -l
+kubectl --kubeconfig $KC logs -n tokensolo $POD --since-time=$SINCE 2>&1 | wc -l
 
 # 1. 致命信号（任一命中 → 走红线）
-kubectl --kubeconfig $KC logs -n tokensolo deployment/sub2api --since-time=$SINCE 2>&1 \
+kubectl --kubeconfig $KC logs -n tokensolo $POD --since-time=$SINCE 2>&1 \
   | grep -iE "panic|nil pointer|runtime error|Fatal" | head
 
-# 2. error 级日志计数 + 按 msg 聚合（看趋势与类型）
-kubectl --kubeconfig $KC logs -n tokensolo deployment/sub2api --since-time=$SINCE 2>&1 \
-  | grep '"level":"error"' | tee /tmp/sub2api-p6-errors.log | wc -l
-jq -r '.msg // .M // "?"' /tmp/sub2api-p6-errors.log 2>/dev/null | sort | uniq -c | sort -rn | head -10
+# 2. ERROR 级日志计数 + 按 msg 聚合（看趋势与类型）
+kubectl --kubeconfig $KC logs -n tokensolo $POD --since-time=$SINCE 2>&1 \
+  | grep '"level":"ERROR"' | tee /tmp/sub2api-p6-errors.log | wc -l
+jq -r '.msg // "?"' /tmp/sub2api-p6-errors.log 2>/dev/null | sort | uniq -c | sort -rn | head -10
 
 # 3. Pod 重启计数（应保持 0）
 kubectl --kubeconfig $KC get pods -n tokensolo -l app=sub2api -o jsonpath='{range .items[*]}{.metadata.name}{" restarts="}{.status.containerStatuses[0].restartCount}{"\n"}{end}'
 ```
 
-### 辅助：CLS（可选，首次发版需实测字段后固化）
+### 辅助：CLS（字段已于 2026-09-10 首发实测）
 
-- **Region** `ap-tokyo` · **TopicId** `6bd9c8ca-5939-41ee-a7a6-20100177d917` · 主题 `tke_tokensolo`（整 namespace 混合，按 Pod 过滤）
+- **Region** `ap-tokyo` · **TopicId** `6bd9c8ca-5939-41ee-a7a6-20100177d917` · 主题 `tke_tokensolo`（整 namespace 混合）
+- **服务过滤用 `service:sub2api`**（KV 索引，与 tokensolo 的 `service:tokensolo` 同一字段）；**`pod_name` 未建索引**，`pod_name:sub2api*` 直接报 `can not search on this field`
+- `level` 可做检索条件也可 SELECT/GROUP BY，值大写（`level:ERROR`）；**`msg` 不可 SELECT**（`Column 'msg' cannot be resolved`），要看内容用原始检索从 `Results[].LogJson` 取
 - 默认 `tccli cls SearchLog | jq`；`--UseNewAnalysis True` 必须大写；`AnalysisRecords` 是 **JSON 字符串数组**，取值用 `jq -r '(.AnalysisRecords[0] // empty) | fromjson | .cnt'`
 - 本机代理可能把 tccli 拦成 `407 Proxy Authentication Required`，`jq` 随即 parse error——**查询失败 ≠ 0 错误**。先裸调，被拦再 `rtk proxy "env -u http_proxy -u https_proxy ... no_proxy='*' tccli ..."`
 
@@ -544,14 +550,16 @@ kubectl --kubeconfig $KC get pods -n tokensolo -l app=sub2api -o jsonpath='{rang
 TOPIC=6bd9c8ca-5939-41ee-a7a6-20100177d917
 # sanity：窗口内有 sub2api 日志
 tccli cls SearchLog --TopicId $TOPIC --From $FROM --To $TO --UseNewAnalysis True --Limit 5 \
-  --Query 'pod_name:sub2api* | SELECT count(*) AS cnt' | jq -r '(.AnalysisRecords[0] // empty) | fromjson | .cnt'
-# error 级
+  --Query 'service:sub2api | SELECT count(*) AS cnt' | jq -r '(.AnalysisRecords[0] // empty) | fromjson | .cnt'
+# 按 level 分布
+tccli cls SearchLog --TopicId $TOPIC --From $FROM --To $TO --UseNewAnalysis True --Limit 10 \
+  --Query 'service:sub2api | SELECT level, count(*) AS cnt GROUP BY level' | jq -r '.AnalysisRecords[]? | fromjson | "\(.cnt)\t\(.level)"'
+# ERROR 明细（msg 只能从原始日志取）
 tccli cls SearchLog --TopicId $TOPIC --From $FROM --To $TO --UseNewAnalysis True --Limit 20 \
-  --Query 'pod_name:sub2api* AND level:error | SELECT msg, count(*) AS cnt GROUP BY msg ORDER BY cnt DESC LIMIT 10' \
-  | jq -r '.AnalysisRecords[]? | fromjson'
+  --Query 'service:sub2api AND level:ERROR' | jq -r '.Results[]? | .LogJson | fromjson | "\(.time)\t\(.caller)\t\(.msg[0:120])"'
 ```
 
-> ⚠️ `pod_name` / `level` / `msg` 是否建了 KV 索引**尚未实测**。首次发版时若 sanity 返回 0 而 kubectl 明明有日志，改用全文检索 `"sub2api" AND "error"`，并把实测结果回填到本节。CLS 在本 skill 中只是辅助，kubectl 为准。
+> CLS 在本 skill 中只是辅助（有约 1 分钟采集延迟），kubectl 为准。
 
 ### 执行流程
 
@@ -565,7 +573,7 @@ tccli cls SearchLog --TopicId $TOPIC --From $FROM --To $TO --UseNewAnalysis True
 ### 每轮状态行格式（必须输出，不可省略）
 
 ```
-[P6 监控 轮次 N/6 | HH:MM] 累计 X 条 error，重启 0 — [正常 / ⚠️ 新增 Y 条，见下方]
+[P6 监控 轮次 N/6 | HH:MM] 累计 X 条 ERROR，重启 0 — [正常 / ⚠️ 新增 Y 条，见下方]
 ```
 
 ### 相关性判断准则
@@ -587,7 +595,7 @@ tccli cls SearchLog --TopicId $TOPIC --From $FROM --To $TO --UseNewAnalysis True
 |------|-------|------------|------|--------------|
 | ...  | error | ...        | ...  | ✅ 无关 / ⚠️ 疑似 / 🔵 pre-existing |
 
-总计：X 条 error，Pod 重启 0
+总计：X 条 ERROR，Pod 重启 0
 结论：[正常 / 发现疑似版本引入问题，已进入 Phase 5 事故响应]
 ```
 
@@ -683,7 +691,9 @@ tccli cls SearchLog --TopicId $TOPIC --From $FROM --To $TO --UseNewAnalysis True
 | P6 监控轮传 `noop:true` 导致用户看不到状态行 | 每轮一律 `noop:false`；ScheduleWakeup 最小间隔 60s |
 | P3 部署成功后只更新进度面板 | 必须先输出醒目的「✅ 部署已完成」声明再贴面板 |
 | P1 `make test-unit \| grep` 空输出当全绿 | RTK hook 会压缩 go test 输出；看退出码或 `rtk proxy` 取原始输出 |
-| CLS 查 `pod_name:sub2api*` 返回 0 当「无日志」 | 字段索引未实测；先用 kubectl 对照，再退化全文 `"sub2api" AND "error"` |
+| CLS 用 `pod_name:sub2api*` 过滤 | `pod_name` 未建索引，直接报 QueryError。服务过滤用 `service:sub2api`；`msg` 不可 SELECT，要看内容走原始检索 `Results[].LogJson` |
+| grep `"level":"error"` 小写拿到 0 | zap level 是大写：`"level":"ERROR"` / `WARN`；CLS 检索同理 `level:ERROR` |
+| 滚动刚结束 `kubectl logs deployment/sub2api` 看到的是 setup 日志 | 选到了 Terminating 的旧 Pod；用 `-l app=sub2api --field-selector=status.phase=Running` 取新 Pod 名再 logs |
 | CLS `AnalysisRecords[0].cnt` 报 Cannot index string | 元素是 JSON 字符串：`(.AnalysisRecords[0] // empty) \| fromjson \| .cnt` |
 | 本机代理把 tccli 拦成 407 | 先裸调；确认 407 再 `rtk proxy "env -u http_proxy -u https_proxy ... no_proxy='*' tccli ..."` |
 | skill 改完 `git status` 看不到 | 上游 .gitignore 忽略 `.claude`，本 fork 已反选 `.claude/skills/**`；若被上游 merge 覆盖回去，重新加反选 |
