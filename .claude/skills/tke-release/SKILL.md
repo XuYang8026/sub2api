@@ -297,8 +297,9 @@ curl -fsS --retry 6 --retry-delay 5 --retry-connrefused https://sub2api.tokensol
 KC=~/.kube/tokensolo.config
 
 # 1. 日志巡检（部署后 2 分钟内）——抓 panic / 启动失败 / 迁移异常
-# ⚠️ 滚动刚结束时 deployment/sub2api 可能选到 Terminating 的旧 Pod，用 label + Running 过滤选新 Pod
-POD=$(kubectl --kubeconfig $KC get pods -n tokensolo -l app=sub2api --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}')
+# ⚠️ 滚动刚结束时 deployment/sub2api 可能选到 Terminating 的旧 Pod
+# 注意 Terminating 中的 Pod phase 仍是 Running，field-selector 过滤不掉，必须再按 deletionTimestamp 过滤
+POD=$(kubectl --kubeconfig $KC get pods -n tokensolo -l app=sub2api -o json | jq -r '.items[] | select(.metadata.deletionTimestamp==null and .status.phase=="Running") | .metadata.name' | head -1)
 kubectl --kubeconfig $KC logs -n tokensolo $POD --tail=200 2>&1 | wc -l    # 先确认日志非空
 kubectl --kubeconfig $KC logs -n tokensolo $POD --tail=200 2>&1 \
   | grep -iE "panic|nil pointer|runtime error|Auto setup failed|Failed to start server|checksum mismatch" | head -20
@@ -327,13 +328,15 @@ kubectl --kubeconfig $KC get pods -n tokensolo -l app=sub2api -o wide
 
 ```bash
 TOKEN="${SUB2API_SMOKE_API_KEY:-}"
+# settings.local.json 里新加的 env 要重启会话才注入，为空时直接从文件读（不打印值）
+[ -z "$TOKEN" ] && TOKEN=$(jq -r '.env.SUB2API_SMOKE_API_KEY // empty' .claude/settings.local.json 2>/dev/null)
 if [ -n "$TOKEN" ]; then
-  echo "✅ 已从环境变量 SUB2API_SMOKE_API_KEY 获取测试 key，直接使用"
+  echo "✅ 已获取测试 key（前缀 ${TOKEN:0:6}…），直接使用"
 fi
 ```
 
-- **环境变量有值**：直接使用，跳过弹窗询问，继续 Step 4.1
-- **环境变量为空**：用 `AskUserQuestion` 弹窗向用户索要：
+- **拿到值**（env 或文件）：直接使用，跳过弹窗询问，继续 Step 4.1
+- **两处都为空**：用 `AskUserQuestion` 弹窗向用户索要：
 
 ```
 question: "Phase 4 冒烟测试需要一个 sub2api 的真实 API Key（未找到环境变量 SUB2API_SMOKE_API_KEY，可在 .claude/settings.local.json 中预配置以后自动跳过此步）"
@@ -519,8 +522,9 @@ sub2api 日志是 zap JSON，`level` 取值**大写**（`"level":"ERROR"` / `"WA
 ```bash
 KC=~/.kube/tokensolo.config
 SINCE=<监控起始 RFC3339>
-# ⚠️ 滚动刚结束时 deployment/sub2api 可能选到 Terminating 的旧 Pod，用 label 选 Running 的新 Pod
-POD=$(kubectl --kubeconfig $KC get pods -n tokensolo -l app=sub2api --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}')
+# ⚠️ 滚动刚结束时 deployment/sub2api 可能选到 Terminating 的旧 Pod
+# 注意 Terminating 中的 Pod phase 仍是 Running，field-selector 过滤不掉，必须再按 deletionTimestamp 过滤
+POD=$(kubectl --kubeconfig $KC get pods -n tokensolo -l app=sub2api -o json | jq -r '.items[] | select(.metadata.deletionTimestamp==null and .status.phase=="Running") | .metadata.name' | head -1)
 
 # 0. sanity：日志非空（空输出 ≠ 干净）
 kubectl --kubeconfig $KC logs -n tokensolo $POD --since-time=$SINCE 2>&1 | wc -l
@@ -693,7 +697,8 @@ tccli cls SearchLog --TopicId $TOPIC --From $FROM --To $TO --UseNewAnalysis True
 | P1 `make test-unit \| grep` 空输出当全绿 | RTK hook 会压缩 go test 输出；看退出码或 `rtk proxy` 取原始输出 |
 | CLS 用 `pod_name:sub2api*` 过滤 | `pod_name` 未建索引，直接报 QueryError。服务过滤用 `service:sub2api`；`msg` 不可 SELECT，要看内容走原始检索 `Results[].LogJson` |
 | grep `"level":"error"` 小写拿到 0 | zap level 是大写：`"level":"ERROR"` / `WARN`；CLS 检索同理 `level:ERROR` |
-| 滚动刚结束 `kubectl logs deployment/sub2api` 看到的是 setup 日志 | 选到了 Terminating 的旧 Pod；用 `-l app=sub2api --field-selector=status.phase=Running` 取新 Pod 名再 logs |
+| 滚动刚结束 `kubectl logs deployment/sub2api` 看到的是旧 Pod 日志 | 选到了 Terminating 的旧 Pod。`--field-selector=status.phase=Running` **过滤不掉它**（终止中 phase 仍是 Running），要用 `-o json \| jq 'select(.metadata.deletionTimestamp==null)'`（2026-09-10 v2026.09.10.2 踩到） |
+| P4 `$SUB2API_SMOKE_API_KEY` 为空就弹窗要 key | `settings.local.json` 新加的 env 当前会话不生效；先 `jq -r '.env.SUB2API_SMOKE_API_KEY' .claude/settings.local.json` 兜底再弹窗（2026-09-10） |
 | CLS `AnalysisRecords[0].cnt` 报 Cannot index string | 元素是 JSON 字符串：`(.AnalysisRecords[0] // empty) \| fromjson \| .cnt` |
 | 本机代理把 tccli 拦成 407 | 先裸调；确认 407 再 `rtk proxy "env -u http_proxy -u https_proxy ... no_proxy='*' tccli ..."` |
 | skill 改完 `git status` 看不到 | 上游 .gitignore 忽略 `.claude`，本 fork 已反选 `.claude/skills/**`；若被上游 merge 覆盖回去，重新加反选 |
