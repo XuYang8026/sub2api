@@ -3,6 +3,7 @@
 # - 触发 tag 形如 vYYYY.MM.DD.N（v2026.09.10.1），由 /tke-release skill 打出
 # - 用仓库根 Dockerfile 完整构建（前端 + 后端），产出 ghcr.io/<owner>/sub2api:<tag>（含 v）
 # - 上游的 Release workflow（GoReleaser）只响应 semver tag，已在 release.yml 中排除日期 tag
+# - 2026-09-10 v2026.09.10.1 首发验证：日期 tag 仅触发本 workflow，Release 未触发；构建约 7 分钟
 name: Publish Docker image (GHCR)
 
 on:
