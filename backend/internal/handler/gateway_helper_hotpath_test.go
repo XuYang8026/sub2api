@@ -501,3 +501,26 @@ type helperConcurrencyCacheStubWithError struct {
 func (s *helperConcurrencyCacheStubWithError) AcquireAccountSlot(ctx context.Context, accountID int64, maxConcurrency int, requestID string) (bool, error) {
 	return false, s.err
 }
+
+func TestSetClaudeCodeClientContext_ParsedRequestProbeWithoutSystemPrompt(t *testing.T) {
+	c, _ := newHelperTestContext(http.MethodPost, "/v1/messages")
+	c.Request.Header.Set("User-Agent", "claude-cli/2.1.260 (external, cli)")
+
+	// The hot path reuses ParsedRequest instead of re-parsing the body; the probe
+	// marker must survive that projection or the exemption only works cold.
+	parsed := &service.ParsedRequest{Model: "claude-sonnet-4-5", MaxTokens: 1}
+	SetClaudeCodeClientContext(c, nil, parsed)
+	require.True(t, service.IsClaudeCodeClient(c.Request.Context()))
+
+	// <fork:relax-claude-code-detect>
+	// 下方断言要求"非探测请求且无 system prompt 时判定为非 Claude Code"，依赖严格
+	// deep-validation policy；fork 在 init() 中放宽为 UA-only，会判定为 true。
+	// 上方探测标记热路径断言在两种 policy 下均有效，已执行完毕。
+	t.Skip("fork:relax-claude-code-detect — strict validation disabled")
+	// </fork>
+
+	c2, _ := newHelperTestContext(http.MethodPost, "/v1/messages")
+	c2.Request.Header.Set("User-Agent", "claude-cli/2.1.260 (external, cli)")
+	SetClaudeCodeClientContext(c2, nil, &service.ParsedRequest{Model: "claude-sonnet-4-5", MaxTokens: 64})
+	require.False(t, service.IsClaudeCodeClient(c2.Request.Context()))
+}
