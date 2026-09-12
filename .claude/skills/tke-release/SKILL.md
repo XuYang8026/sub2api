@@ -52,7 +52,7 @@ sub2api 是 tokensolo 的 **GPT 号池上游**（地位等同 tokensolo-crs）�
 
 - 平时对线上 TKE 集群是**只读**约束。**本 skill 是用户主动发版，流程内的 `kubectl set image / rollout / undo` 等集群写操作在此次发版中被授权**——仅限本发版流程，不扩展到其他场景。
 - **不自动 `git commit`**：预检若发现未提交改动，用 `AskUserQuestion` 询问用户是否提交及 commit message，得到确认后再 commit；tag / push / 部署属发版核心，用户调用即视为授权，自动执行。
-- **manifests 不在本仓库**：K8s 清单在 `../tokensolo/docs/deploy/k8s/manifests/prod/sub2api/`（同 crs 惯例）。日常发版只 `kubectl set image`，**不要** `kubectl apply -f` 该目录（会把镜像重置为清单里的初始 tag）。
+- **manifests 不在本仓库**：K8s 清单在 `../new-api-xy/docs/deploy/k8s/manifests/prod/sub2api/`（同 crs 惯例）。日常发版只 `kubectl set image`，**不要** `kubectl apply -f` 该目录（会把镜像重置为清单里的初始 tag）。
 
 ## 🚨 致命红线（高于所有 Phase）
 
@@ -112,7 +112,7 @@ tag 在 Phase 1 确认版本号之前用 `待定`。
 | 构建 workflow 名 | `Publish Docker image (GHCR)`（`.github/workflows/docker-image-ghcr.yml`） |
 | **不该被触发的 workflow** | `Release`（上游 GoReleaser，只响应 semver tag；`release.yml` 已排除日期 tag） |
 | 镜像 | `ghcr.io/xuyang8026/sub2api:<tag>`（**含 v**，如 `:v2026.09.10.1`；旧 `-fork.N` 镜像不含 v，勿混淆） |
-| Deployment | `sub2api`（×1） |
+| Deployment | `sub2api`（**×3 副本**，maxSurge=1 / maxUnavailable=0，逐个滚动全程约 25s；2026-09-11 起） |
 | Pod label selector | `app=sub2api` |
 | 容器名(set image) | `sub2api` |
 | rollout timeout | 300s |
@@ -120,8 +120,8 @@ tag 在 Phase 1 确认版本号之前用 `待定`。
 | 容器内自检 | `kubectl exec -n tokensolo deploy/sub2api -- wget -qO- http://127.0.0.1:8080/health`（镜像只有 wget，没有 curl） |
 | KUBECONFIG | `~/.kube/tokensolo.config` |
 | Namespace | `tokensolo` |
-| manifests | `../tokensolo/docs/deploy/k8s/manifests/prod/sub2api/` |
-| 发布报告目录 | `../tokensolo/docs/deploy/report/`（本仓库 `docs/*` 被上游 .gitignore 忽略） |
+| manifests | `../new-api-xy/docs/deploy/k8s/manifests/prod/sub2api/` |
+| 发布报告目录 | `../new-api-xy/docs/deploy/report/`（本仓库 `docs/*` 被上游 .gitignore 忽略） |
 
 ---
 
@@ -138,7 +138,7 @@ question: "即将发布 sub2api 到生产环境（sub2api.tokensolo.com，tokens
 header: "⚠️ 生产发版确认"
 options:
   - label: "确认，发布到生产（prod）"
-    description: "滚动更新单副本 Deployment，新 Pod 就绪后才摘旧 Pod"
+    description: "滚动更新 3 副本 Deployment，逐个替换，新 Pod 就绪后才摘旧 Pod"
   - label: "取消"
     description: "中止本次发版"
 multiSelect: false
@@ -260,6 +260,9 @@ done
 # 镜像确认（tag 含 v）
 gh api "/users/XuYang8026/packages/container/sub2api/versions?per_page=5" \
   --jq '.[].metadata.container.tags[]' | grep -x "<tag>"
+# ⚠️ gh token 无 read:packages 时上面报 HTTP 403（2026-09-12 实测）——改用 manifest + 构建日志双重确认：
+docker manifest inspect ghcr.io/xuyang8026/sub2api:<tag> | jq -r '.config.digest // .manifests[0].digest'
+gh run view $RUN_ID -R XuYang8026/sub2api --log | grep -oE 'ghcr.io/xuyang8026/sub2api:[A-Za-z0-9._-]+' | sort -u   # 应含 <tag> 与 latest
 ```
 
 - 构建失败 → 停止，不部署；`gh run view $RUN_ID --log-failed` 看原因。
@@ -281,7 +284,7 @@ IMAGE=ghcr.io/xuyang8026/sub2api:<tag>
 # 记录旧镜像（回滚 / 报告用）
 kubectl get deploy/sub2api -n tokensolo -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}'
 
-# 滚动更新（单副本 + maxUnavailable=0 + maxSurge=1：新 Pod Ready 后才摘旧 Pod）
+# 滚动更新（3 副本 + maxUnavailable=0 + maxSurge=1：逐个替换，新 Pod Ready 后才摘旧 Pod，全程约 25s）
 kubectl set image deployment/sub2api sub2api=$IMAGE -n tokensolo
 kubectl rollout status deployment/sub2api -n tokensolo --timeout=300s
 
@@ -289,7 +292,7 @@ kubectl rollout status deployment/sub2api -n tokensolo --timeout=300s
 curl -fsS --retry 6 --retry-delay 5 --retry-connrefused https://sub2api.tokensolo.com/health
 ```
 
-> 迁移在新 Pod 启动时自动执行（带 PG advisory lock），迁移完成前进程不监听端口，startupProbe 最多等 5 分钟。`rollout status` 超时通常就是迁移卡住或启动失败——看日志，别盲等。
+> 迁移在新 Pod 启动时自动执行（带 PG advisory lock），迁移完成前进程不监听端口，startupProbe 最多等 5 分钟。`rollout status` 超时通常就是迁移卡住或启动失败——看日志，别盲等。**迁移运行器成功时不打任何 INFO 日志**（只在失败 / checksum 不匹配时报错），日志里 grep 不到 `migrat` 是正常的：`Server started on` 出现 = 迁移已应用（2026-09-12 实测，迁移 238）。
 
 **部署后立即验证（两步都要做）**：
 
@@ -299,10 +302,14 @@ KC=~/.kube/tokensolo.config
 # 1. 日志巡检（部署后 2 分钟内）——抓 panic / 启动失败 / 迁移异常
 # ⚠️ 滚动刚结束时 deployment/sub2api 可能选到 Terminating 的旧 Pod
 # 注意 Terminating 中的 Pod phase 仍是 Running，field-selector 过滤不掉，必须再按 deletionTimestamp 过滤
-POD=$(kubectl --kubeconfig $KC get pods -n tokensolo -l app=sub2api -o json | jq -r '.items[] | select(.metadata.deletionTimestamp==null and .status.phase=="Running") | .metadata.name' | head -1)
-kubectl --kubeconfig $KC logs -n tokensolo $POD --tail=200 2>&1 | wc -l    # 先确认日志非空
-kubectl --kubeconfig $KC logs -n tokensolo $POD --tail=200 2>&1 \
-  | grep -iE "panic|nil pointer|runtime error|Auto setup failed|Failed to start server|checksum mismatch" | head -20
+# 3 副本：必须逐个 Pod 检查。⚠️ zsh 下 `for P in $PODS` 不分词（把三个名字当一个），要用 while read
+kubectl --kubeconfig $KC get pods -n tokensolo -l app=sub2api -o json | jq -r '.items[] | select(.metadata.deletionTimestamp==null and .status.phase=="Running") | .metadata.name' > /tmp/sub2api-pods.txt
+while IFS= read -r POD; do
+  echo "--- $POD lines=$(kubectl --kubeconfig $KC logs -n tokensolo "$POD" --tail=300 2>&1 | wc -l | tr -d ' ')"   # 先确认日志非空
+  kubectl --kubeconfig $KC logs -n tokensolo "$POD" --tail=300 2>&1 \
+    | grep -iE "panic|nil pointer|runtime error|Auto setup failed|Failed to start server|checksum mismatch" | head -20
+  kubectl --kubeconfig $KC logs -n tokensolo "$POD" --tail=300 2>&1 | grep -c "Server started on"   # 应为 1
+done < /tmp/sub2api-pods.txt
 
 # 2. Pod 状态确认（label 是 app=sub2api）
 kubectl --kubeconfig $KC get pods -n tokensolo -l app=sub2api -o wide
@@ -497,7 +504,7 @@ git checkout <panic-commit>
 
 ### Step 5.4 — 事故归档
 
-在 `../tokensolo/docs/deploy/report/` 写事故复盘 md（文件名 `YYYY-MM-DD-sub2api-<short-desc>.md`），包含：
+在 `../new-api-xy/docs/deploy/report/` 写事故复盘 md（文件名 `YYYY-MM-DD-sub2api-<short-desc>.md`），包含：
 - 时间线（精确到分钟，含挂掉总时长）
 - 根因 + 误判记录（SOP / 测试 / Skill 哪里失守）
 - 改进项（已落地的具体 commit / SOP 行号）
@@ -524,19 +531,26 @@ KC=~/.kube/tokensolo.config
 SINCE=<监控起始 RFC3339>
 # ⚠️ 滚动刚结束时 deployment/sub2api 可能选到 Terminating 的旧 Pod
 # 注意 Terminating 中的 Pod phase 仍是 Running，field-selector 过滤不掉，必须再按 deletionTimestamp 过滤
-POD=$(kubectl --kubeconfig $KC get pods -n tokensolo -l app=sub2api -o json | jq -r '.items[] | select(.metadata.deletionTimestamp==null and .status.phase=="Running") | .metadata.name' | head -1)
+# 3 副本：把所有存活 Pod 自起点以来的日志合并到一个文件再统计（zsh 下不要 for P in $PODS）
+kubectl --kubeconfig $KC get pods -n tokensolo -l app=sub2api -o json | jq -r '.items[] | select(.metadata.deletionTimestamp==null and .status.phase=="Running") | .metadata.name' > /tmp/sub2api-pods.txt
+: > /tmp/sub2api-p6-all.log
+while IFS= read -r POD; do kubectl --kubeconfig $KC logs -n tokensolo "$POD" --since-time=$SINCE 2>&1 >> /tmp/sub2api-p6-all.log; done < /tmp/sub2api-pods.txt
+L=/tmp/sub2api-p6-all.log
 
 # 0. sanity：日志非空（空输出 ≠ 干净）
-kubectl --kubeconfig $KC logs -n tokensolo $POD --since-time=$SINCE 2>&1 | wc -l
+wc -l < $L
 
 # 1. 致命信号（任一命中 → 走红线）
-kubectl --kubeconfig $KC logs -n tokensolo $POD --since-time=$SINCE 2>&1 \
-  | grep -iE "panic|nil pointer|runtime error|Fatal" | head
+grep -iE "panic|nil pointer|runtime error|Fatal" $L | head
 
 # 2. ERROR 级日志计数 + 按 msg 聚合（看趋势与类型）
-kubectl --kubeconfig $KC logs -n tokensolo $POD --since-time=$SINCE 2>&1 \
-  | grep '"level":"ERROR"' | tee /tmp/sub2api-p6-errors.log | wc -l
+grep '"level":"ERROR"' $L | tee /tmp/sub2api-p6-errors.log | wc -l
 jq -r '.msg // "?"' /tmp/sub2api-p6-errors.log 2>/dev/null | sort | uniq -c | sort -rn | head -10
+
+# 2b. 请求量 / 客户端 5xx（status 字段可能是字串，先 tostring）+ WARN 分布
+grep -c '"msg":"http request completed"' $L
+grep '"msg":"http request completed"' $L | jq -r 'select((((.status // .status_code)|tostring)|tonumber? // 0) >= 500) | "\(.time[11:19]) \(.path)"'
+grep '"level":"WARN"' $L | jq -r '.msg // "?"' | sort | uniq -c | sort -rn | head -6
 
 # 3. Pod 重启计数（应保持 0）
 kubectl --kubeconfig $KC get pods -n tokensolo -l app=sub2api -o jsonpath='{range .items[*]}{.metadata.name}{" restarts="}{.status.containerStatuses[0].restartCount}{"\n"}{end}'
@@ -568,7 +582,7 @@ tccli cls SearchLog --TopicId $TOPIC --From $FROM --To $TO --UseNewAnalysis True
 ### 执行流程
 
 1. 记录监控起点 `SINCE`（RFC3339）
-2. 用 TaskCreate 创建监控任务，记录起点和初始累计状态（空）
+2. 用 TaskCreate 创建监控任务，记录起点和初始累计状态（空）；环境没有 TaskCreate 时省略，状态全部放进 ScheduleWakeup 的 prompt 里携带
 3. 用 ScheduleWakeup（delaySeconds=60）启动循环，每轮 prompt 携带：起点、上轮累计错误列表、当前轮次 / 6
    - ⚠️ **每轮 ScheduleWakeup 一律传 `noop:false`**：连续 `noop:true` 的轮次输出会被终端折叠，状态行等于没发
 4. 每轮唤醒后：跑主信号 0-3 → 与上轮对比提取**新增** → 相关性判断 → **输出一行状态行** → 未到第 6 轮继续 ScheduleWakeup；第 6 轮输出汇总报告，TaskUpdate 完成
@@ -607,7 +621,7 @@ tccli cls SearchLog --TopicId $TOPIC --From $FROM --To $TO --UseNewAnalysis True
 
 ## 发布报告模板
 
-**发版完成后写入 `../tokensolo/docs/deploy/report/<YYYY-MM-DD>-sub2api-tke-prod-<tag>.md`**（tokensolo 仓库；写完提示用户在 tokensolo 仓库 commit，本 skill 不代为 commit），各 `{{}}` 用实际值替换，状态列统一用 `✅ 成功 / ❌ 失败 / ⚠️ 注意 / ⏭️ 跳过`：
+**发版完成后写入 `../new-api-xy/docs/deploy/report/<YYYY-MM-DD>-sub2api-tke-prod-<tag>.md`**（`new-api-xy` 仓库，即 tokensolo 代码仓库的本机目录；写完提示用户在该仓库 commit，本 skill 不代为 commit），各 `{{}}` 用实际值替换，状态列统一用 `✅ 成功 / ❌ 失败 / ⚠️ 注意 / ⏭️ 跳过`：
 
 ```markdown
 # 发布报告 — sub2api {{tag}}
@@ -662,7 +676,7 @@ tccli cls SearchLog --TopicId $TOPIC --From $FROM --To $TO --UseNewAnalysis True
 
 1. **发版基于 main 分支**——打 tag 前确认本地 main 与 origin/main 一致（Phase 2 自动检查并 push）。
 2. **两套 tag 共存**：日期 tag（本 skill）触发 `Publish Docker image (GHCR)`；semver tag 触发上游 `Release`（GoReleaser）。日常只打日期 tag；merge 上游时 `git fetch upstream --tags` 带进来的 `v0.2.x` 不要 push 到 origin。
-3. **manifests / 报告都在 tokensolo 仓库**：首次部署、改 ConfigMap、切 SKIP_SETUP 见 `../tokensolo/docs/deploy/k8s/manifests/prod/sub2api/README.md`。
+3. **manifests / 报告都在 `../new-api-xy/` 仓库**（tokensolo 代码仓库的本机目录名，2026-09-11 实测；本机没有 `../tokensolo/` 目录）：首次部署、改 ConfigMap、切 SKIP_SETUP 见 `../new-api-xy/docs/deploy/k8s/manifests/prod/sub2api/README.md`。
 4. **发版路径**：主路径用本 skill（含 Phase 4 冒烟 + Phase 6 监控）。`tke-manual-release.yml` 仅保留 `workflow_dispatch` 作为紧急备用（需仓库 secret `KUBECONFIG_TKE`），无冒烟，用后补测。
 5. 与 tokensolo 的 tke-release skill 保持结构一致；通用坑（gh run watch、noop、RTK hook、tccli 代理）两边同步更新。
 
@@ -702,4 +716,12 @@ tccli cls SearchLog --TopicId $TOPIC --From $FROM --To $TO --UseNewAnalysis True
 | CLS `AnalysisRecords[0].cnt` 报 Cannot index string | 元素是 JSON 字符串：`(.AnalysisRecords[0] // empty) \| fromjson \| .cnt` |
 | 本机代理把 tccli 拦成 407 | 先裸调；确认 407 再 `rtk proxy "env -u http_proxy -u https_proxy ... no_proxy='*' tccli ..."` |
 | skill 改完 `git status` 看不到 | 上游 .gitignore 忽略 `.claude`，本 fork 已反选 `.claude/skills/**`；若被上游 merge 覆盖回去，重新加反选 |
-| 发布报告写到本仓库 `docs/` | 被上游 .gitignore 忽略，写到 `../tokensolo/docs/deploy/report/` |
+| 发布报告写到本仓库 `docs/` | 被上游 .gitignore 忽略，写到 `../new-api-xy/docs/deploy/report/` |
+| zsh 下 `for P in $PODS` 把三个 Pod 名当一个字符串 | kubectl 报 NotFound、日志计数恒 0、`fatal=none` 是假的。用 `while IFS= read -r P; do …; done < /tmp/sub2api-pods.txt` 逐 Pod 处理（2026-09-11、09-12 两次踩到） |
+| Deployment 按 ×1 单副本理解 | 实际 **3 副本** maxSurge=1 / maxUnavailable=0，P3 / P6 都要覆盖全部 Pod |
+| GHCR versions API 报 `403 read:packages` | gh token 无该 scope；用 `docker manifest inspect` + `gh run view --log` grep 推送 tag 兜底（2026-09-12） |
+| 日志 grep 不到迁移行就怀疑迁移没跑 | 迁移运行器成功时静默，只在失败时报错；`Server started on` 出现即迁移已应用（2026-09-12） |
+| CLS 用 `status:502` 做条件恒得 0 | `status` 字段未建索引；客户端 5xx 用 kubectl 日志里 `"msg":"http request completed"` 的 status 字段统计（2026-09-12） |
+| tccli 报 `ClientNetworkError` / `SSL: UNEXPECTED_EOF` | 网络抖动，不是 407；重试 2-3 次（含去代理版本），仍失败则以 kubectl 为准继续，不阻塞轮次；jq 解析 `LogJson` 会因栈里的换行报错，改用 grep -o 取字段（2026-09-12） |
+| P4 等用户确认拖了数小时，P6 第 1 轮窗口覆盖几小时 WARN | 起点仍固定为 rollout 完成时刻不动；量级判断用 CLS 与部署前**等长**窗口对比（`service:sub2api AND level:WARN`、`msg:"…"` 均可做条件），同量级 = pre-existing（2026-09-12） |
+| kubectl 报 `Unable to connect to the server: EOF`，本轮日志行数骤降 | 本机到 TKE API Server 链路抖动，不是服务问题（health 仍 200）。合并日志少了某个 Pod 时计数全部作废：逐 Pod 重试 3-4 次、确认每个 Pod 都有输出（`[ -s file ]`）再统计（2026-09-12 P6 第 5 轮踩到） |
