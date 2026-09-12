@@ -15,6 +15,7 @@ import (
 
 var ForkExtSet = wire.NewSet(
 	NewProxyHealthRepository,
+	ProvideForkOAuthSessionMirrors, // <fork:oauth-session>
 )
 
 // </fork>

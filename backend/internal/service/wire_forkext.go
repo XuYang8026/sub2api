@@ -50,6 +50,7 @@ func ProvideProxyCircuitBreakerAndRegister(
 	tempUnschedCache TempUnschedCache,
 	runtimeBlocker RuntimeSchedulingBlocker,
 	_ ForkModelsListRegistration,
+	_ ForkOAuthSessionMirrorRegistration, // <fork:oauth-session>
 ) *ProxyCircuitBreaker {
 	cb := NewProxyCircuitBreaker(accountRepo, proxyRepo, proxyHealth, tempUnschedCache, runtimeBlocker)
 	SetProxyCircuitBreaker(cb)

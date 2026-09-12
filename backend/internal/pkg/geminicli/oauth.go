@@ -52,12 +52,16 @@ func NewSessionStore() *SessionStore {
 }
 
 func (s *SessionStore) Set(sessionID string, session *OAuthSession) {
+	forkMirrorSet(sessionID, session) // <fork:oauth-session>
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.sessions[sessionID] = session
 }
 
 func (s *SessionStore) Get(sessionID string) (*OAuthSession, bool) {
+	if session, ok, handled := forkMirrorGet(sessionID); handled { // <fork:oauth-session>
+		return session, ok
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	session, ok := s.sessions[sessionID]
@@ -71,6 +75,7 @@ func (s *SessionStore) Get(sessionID string) (*OAuthSession, bool) {
 }
 
 func (s *SessionStore) Delete(sessionID string) {
+	forkMirrorDelete(sessionID) // <fork:oauth-session>
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.sessions, sessionID)
