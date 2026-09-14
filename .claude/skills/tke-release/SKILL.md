@@ -725,3 +725,4 @@ tccli cls SearchLog --TopicId $TOPIC --From $FROM --To $TO --UseNewAnalysis True
 | tccli 报 `ClientNetworkError` / `SSL: UNEXPECTED_EOF` | 网络抖动，不是 407；重试 2-3 次（含去代理版本），仍失败则以 kubectl 为准继续，不阻塞轮次；jq 解析 `LogJson` 会因栈里的换行报错，改用 grep -o 取字段（2026-09-12） |
 | P4 等用户确认拖了数小时，P6 第 1 轮窗口覆盖几小时 WARN | 起点仍固定为 rollout 完成时刻不动；量级判断用 CLS 与部署前**等长**窗口对比（`service:sub2api AND level:WARN`、`msg:"…"` 均可做条件），同量级 = pre-existing（2026-09-12） |
 | kubectl 报 `Unable to connect to the server: EOF`，本轮日志行数骤降 | 本机到 TKE API Server 链路抖动，不是服务问题（health 仍 200）。合并日志少了某个 Pod 时计数全部作废：逐 Pod 重试 3-4 次、确认每个 Pod 都有输出（`[ -s file ]`）再统计（2026-09-12 P6 第 5 轮踩到） |
+| 脚本里 `for path in …` 之后 curl/kubectl 全部 `command not found` | zsh 的 `path` 是 `PATH` 的数组别名，给它赋值会清空 PATH。循环变量换别的名字（如 `route`、`ep`）（2026-09-12 v2026.09.12.2 P3 踩到） |
