@@ -1558,21 +1558,50 @@ func openAIStreamFailedEventShouldFailover(payload []byte, message string) bool 
 	if combined == "" {
 		return true
 	}
-	nonRetryableMarkers := []string{
-		"invalid_request",
-		"content_policy",
-		"policy",
-		"safety",
-		"high-risk cyber",
-		"not allowed",
-		"violat",
+	return !openAIStreamTerminalFailureIsRequestScoped(payload, message)
+}
+
+// openAIStreamNonRetryableFailureMarkers are lower-cased substrings (matched
+// against message + error code + error type) that identify a terminal failure
+// as a deterministic rejection of the request itself rather than an account or
+// capacity fault. Shared by the response.failed and bare error event paths so
+// both terminal shapes of the same upstream failure make the same decision.
+var openAIStreamNonRetryableFailureMarkers = []string{
+	"invalid_request",
+	"content_policy",
+	"policy",
+	"safety",
+	"high-risk cyber",
+	"not allowed",
+	"violat",
+}
+
+// openAIStreamTerminalFailureIsRequestScoped reports whether a terminal failure
+// carried inside an HTTP 200 stream is scoped to the request (content policy /
+// invalid_prompt / invalid_request). Replaying the same request on another
+// account reproduces the same rejection, so failover must not be attempted.
+//
+// The Codex backend's moderation refusal ("Invalid prompt: your prompt was
+// flagged as potentially violating our usage policy. Please try again with a
+// different prompt") deliberately contains retry wording; without this guard
+// the bare error event path treated it as transient and burned every account
+// in the pool on a prompt that can never succeed.
+func openAIStreamTerminalFailureIsRequestScoped(payload []byte, message string) bool {
+	code := openAIStreamFailedEventErrorCode(payload)
+	if code == "invalid_prompt" {
+		return true
 	}
-	for _, marker := range nonRetryableMarkers {
+	errType := strings.ToLower(strings.TrimSpace(gjson.GetBytes(payload, "response.error.type").String()))
+	if errType == "" {
+		errType = strings.ToLower(strings.TrimSpace(gjson.GetBytes(payload, "error.type").String()))
+	}
+	combined := strings.ToLower(strings.TrimSpace(message + " " + code + " " + errType))
+	for _, marker := range openAIStreamNonRetryableFailureMarkers {
 		if strings.Contains(combined, marker) {
-			return false
+			return true
 		}
 	}
-	return true
+	return false
 }
 
 func openAIStreamErrorEventShouldFailover(payload []byte, message string) bool {
@@ -1593,6 +1622,9 @@ func openAIStreamErrorEventShouldFailover(payload []byte, message string) bool {
 	}
 	if isOpenAITransientProcessingError(http.StatusBadRequest, message, payload) {
 		return true
+	}
+	if openAIStreamTerminalFailureIsRequestScoped(payload, message) {
+		return false
 	}
 	combined := strings.ToLower(strings.TrimSpace(message + " " +
 		gjson.GetBytes(payload, "error.message").String() + " " +
