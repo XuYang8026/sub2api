@@ -150,6 +150,10 @@ func cloneGroupForDuplicate(source *Group, operationID string) *Group {
 		RequirePrivacySet:               source.RequirePrivacySet,
 		DefaultMappedModel:              source.DefaultMappedModel,
 		MessagesDispatchModelConfig:     cloneGroupMessagesDispatchModelConfig(source.MessagesDispatchModelConfig),
+
+		// <fork:codex-default-instructions>
+		SkipCodexDefaultInstructions: source.SkipCodexDefaultInstructions,
+
 		ModelAllowlist: GroupModelAllowlist{
 			Enabled: source.ModelAllowlist.Enabled,
 			Models:  append([]string(nil), source.ModelAllowlist.Models...),

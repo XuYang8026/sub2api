@@ -1206,6 +1206,11 @@ export default {
         free: '免费 Fast',
         freeHint: '该分组的 Fast 请求仍使用 priority 档位，但客户实际费用按同一请求的 Standard 价格计算。'
       },
+      codexInstructions: {
+        title: 'Codex 默认 instructions',
+        skip: '不注入 Codex 默认 instructions',
+        hint: '开启后，此分组的 OpenAI OAuth 请求若未携带 instructions，网关以空 instructions 发往上游，不再补入约 4k token 的 Codex CLI 内置提示词。客户端自带 instructions 的请求不受影响。'
+      },
       invalidRequestFallback: {
         title: '无效请求兜底分组',
         hint: '仅当上游明确返回 prompt too long 时才会触发，留空表示不兜底',

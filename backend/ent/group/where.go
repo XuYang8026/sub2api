@@ -300,6 +300,11 @@ func FreeOpenaiFast(v bool) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldFreeOpenaiFast, v))
 }
 
+// SkipCodexDefaultInstructions applies equality check predicate on the "skip_codex_default_instructions" field. It's identical to SkipCodexDefaultInstructionsEQ.
+func SkipCodexDefaultInstructions(v bool) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldSkipCodexDefaultInstructions, v))
+}
+
 // RequireOauthOnly applies equality check predicate on the "require_oauth_only" field. It's identical to RequireOauthOnlyEQ.
 func RequireOauthOnly(v bool) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldRequireOauthOnly, v))
@@ -2303,6 +2308,16 @@ func FreeOpenaiFastEQ(v bool) predicate.Group {
 // FreeOpenaiFastNEQ applies the NEQ predicate on the "free_openai_fast" field.
 func FreeOpenaiFastNEQ(v bool) predicate.Group {
 	return predicate.Group(sql.FieldNEQ(FieldFreeOpenaiFast, v))
+}
+
+// SkipCodexDefaultInstructionsEQ applies the EQ predicate on the "skip_codex_default_instructions" field.
+func SkipCodexDefaultInstructionsEQ(v bool) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldSkipCodexDefaultInstructions, v))
+}
+
+// SkipCodexDefaultInstructionsNEQ applies the NEQ predicate on the "skip_codex_default_instructions" field.
+func SkipCodexDefaultInstructionsNEQ(v bool) predicate.Group {
+	return predicate.Group(sql.FieldNEQ(FieldSkipCodexDefaultInstructions, v))
 }
 
 // RequireOauthOnlyEQ applies the EQ predicate on the "require_oauth_only" field.

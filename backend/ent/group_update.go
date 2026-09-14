@@ -1017,6 +1017,20 @@ func (_u *GroupUpdate) SetNillableFreeOpenaiFast(v *bool) *GroupUpdate {
 	return _u
 }
 
+// SetSkipCodexDefaultInstructions sets the "skip_codex_default_instructions" field.
+func (_u *GroupUpdate) SetSkipCodexDefaultInstructions(v bool) *GroupUpdate {
+	_u.mutation.SetSkipCodexDefaultInstructions(v)
+	return _u
+}
+
+// SetNillableSkipCodexDefaultInstructions sets the "skip_codex_default_instructions" field if the given value is not nil.
+func (_u *GroupUpdate) SetNillableSkipCodexDefaultInstructions(v *bool) *GroupUpdate {
+	if v != nil {
+		_u.SetSkipCodexDefaultInstructions(*v)
+	}
+	return _u
+}
+
 // SetRequireOauthOnly sets the "require_oauth_only" field.
 func (_u *GroupUpdate) SetRequireOauthOnly(v bool) *GroupUpdate {
 	_u.mutation.SetRequireOauthOnly(v)
@@ -1863,6 +1877,9 @@ func (_u *GroupUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.FreeOpenaiFast(); ok {
 		_spec.SetField(group.FieldFreeOpenaiFast, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.SkipCodexDefaultInstructions(); ok {
+		_spec.SetField(group.FieldSkipCodexDefaultInstructions, field.TypeBool, value)
 	}
 	if value, ok := _u.mutation.RequireOauthOnly(); ok {
 		_spec.SetField(group.FieldRequireOauthOnly, field.TypeBool, value)
@@ -3211,6 +3228,20 @@ func (_u *GroupUpdateOne) SetNillableFreeOpenaiFast(v *bool) *GroupUpdateOne {
 	return _u
 }
 
+// SetSkipCodexDefaultInstructions sets the "skip_codex_default_instructions" field.
+func (_u *GroupUpdateOne) SetSkipCodexDefaultInstructions(v bool) *GroupUpdateOne {
+	_u.mutation.SetSkipCodexDefaultInstructions(v)
+	return _u
+}
+
+// SetNillableSkipCodexDefaultInstructions sets the "skip_codex_default_instructions" field if the given value is not nil.
+func (_u *GroupUpdateOne) SetNillableSkipCodexDefaultInstructions(v *bool) *GroupUpdateOne {
+	if v != nil {
+		_u.SetSkipCodexDefaultInstructions(*v)
+	}
+	return _u
+}
+
 // SetRequireOauthOnly sets the "require_oauth_only" field.
 func (_u *GroupUpdateOne) SetRequireOauthOnly(v bool) *GroupUpdateOne {
 	_u.mutation.SetRequireOauthOnly(v)
@@ -4087,6 +4118,9 @@ func (_u *GroupUpdateOne) sqlSave(ctx context.Context) (_node *Group, err error)
 	}
 	if value, ok := _u.mutation.FreeOpenaiFast(); ok {
 		_spec.SetField(group.FieldFreeOpenaiFast, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.SkipCodexDefaultInstructions(); ok {
+		_spec.SetField(group.FieldSkipCodexDefaultInstructions, field.TypeBool, value)
 	}
 	if value, ok := _u.mutation.RequireOauthOnly(); ok {
 		_spec.SetField(group.FieldRequireOauthOnly, field.TypeBool, value)

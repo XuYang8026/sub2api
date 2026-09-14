@@ -732,6 +732,20 @@ func (_c *GroupCreate) SetNillableFreeOpenaiFast(v *bool) *GroupCreate {
 	return _c
 }
 
+// SetSkipCodexDefaultInstructions sets the "skip_codex_default_instructions" field.
+func (_c *GroupCreate) SetSkipCodexDefaultInstructions(v bool) *GroupCreate {
+	_c.mutation.SetSkipCodexDefaultInstructions(v)
+	return _c
+}
+
+// SetNillableSkipCodexDefaultInstructions sets the "skip_codex_default_instructions" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableSkipCodexDefaultInstructions(v *bool) *GroupCreate {
+	if v != nil {
+		_c.SetSkipCodexDefaultInstructions(*v)
+	}
+	return _c
+}
+
 // SetRequireOauthOnly sets the "require_oauth_only" field.
 func (_c *GroupCreate) SetRequireOauthOnly(v bool) *GroupCreate {
 	_c.mutation.SetRequireOauthOnly(v)
@@ -1159,6 +1173,10 @@ func (_c *GroupCreate) defaults() error {
 		v := group.DefaultFreeOpenaiFast
 		_c.mutation.SetFreeOpenaiFast(v)
 	}
+	if _, ok := _c.mutation.SkipCodexDefaultInstructions(); !ok {
+		v := group.DefaultSkipCodexDefaultInstructions
+		_c.mutation.SetSkipCodexDefaultInstructions(v)
+	}
 	if _, ok := _c.mutation.RequireOauthOnly(); !ok {
 		v := group.DefaultRequireOauthOnly
 		_c.mutation.SetRequireOauthOnly(v)
@@ -1363,6 +1381,9 @@ func (_c *GroupCreate) check() error {
 	}
 	if _, ok := _c.mutation.FreeOpenaiFast(); !ok {
 		return &ValidationError{Name: "free_openai_fast", err: errors.New(`ent: missing required field "Group.free_openai_fast"`)}
+	}
+	if _, ok := _c.mutation.SkipCodexDefaultInstructions(); !ok {
+		return &ValidationError{Name: "skip_codex_default_instructions", err: errors.New(`ent: missing required field "Group.skip_codex_default_instructions"`)}
 	}
 	if _, ok := _c.mutation.RequireOauthOnly(); !ok {
 		return &ValidationError{Name: "require_oauth_only", err: errors.New(`ent: missing required field "Group.require_oauth_only"`)}
@@ -1656,6 +1677,10 @@ func (_c *GroupCreate) createSpec() (*Group, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.FreeOpenaiFast(); ok {
 		_spec.SetField(group.FieldFreeOpenaiFast, field.TypeBool, value)
 		_node.FreeOpenaiFast = value
+	}
+	if value, ok := _c.mutation.SkipCodexDefaultInstructions(); ok {
+		_spec.SetField(group.FieldSkipCodexDefaultInstructions, field.TypeBool, value)
+		_node.SkipCodexDefaultInstructions = value
 	}
 	if value, ok := _c.mutation.RequireOauthOnly(); ok {
 		_spec.SetField(group.FieldRequireOauthOnly, field.TypeBool, value)
@@ -2744,6 +2769,18 @@ func (u *GroupUpsert) SetFreeOpenaiFast(v bool) *GroupUpsert {
 // UpdateFreeOpenaiFast sets the "free_openai_fast" field to the value that was provided on create.
 func (u *GroupUpsert) UpdateFreeOpenaiFast() *GroupUpsert {
 	u.SetExcluded(group.FieldFreeOpenaiFast)
+	return u
+}
+
+// SetSkipCodexDefaultInstructions sets the "skip_codex_default_instructions" field.
+func (u *GroupUpsert) SetSkipCodexDefaultInstructions(v bool) *GroupUpsert {
+	u.Set(group.FieldSkipCodexDefaultInstructions, v)
+	return u
+}
+
+// UpdateSkipCodexDefaultInstructions sets the "skip_codex_default_instructions" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateSkipCodexDefaultInstructions() *GroupUpsert {
+	u.SetExcluded(group.FieldSkipCodexDefaultInstructions)
 	return u
 }
 
@@ -3995,6 +4032,20 @@ func (u *GroupUpsertOne) SetFreeOpenaiFast(v bool) *GroupUpsertOne {
 func (u *GroupUpsertOne) UpdateFreeOpenaiFast() *GroupUpsertOne {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateFreeOpenaiFast()
+	})
+}
+
+// SetSkipCodexDefaultInstructions sets the "skip_codex_default_instructions" field.
+func (u *GroupUpsertOne) SetSkipCodexDefaultInstructions(v bool) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetSkipCodexDefaultInstructions(v)
+	})
+}
+
+// UpdateSkipCodexDefaultInstructions sets the "skip_codex_default_instructions" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateSkipCodexDefaultInstructions() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateSkipCodexDefaultInstructions()
 	})
 }
 
@@ -5441,6 +5492,20 @@ func (u *GroupUpsertBulk) SetFreeOpenaiFast(v bool) *GroupUpsertBulk {
 func (u *GroupUpsertBulk) UpdateFreeOpenaiFast() *GroupUpsertBulk {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateFreeOpenaiFast()
+	})
+}
+
+// SetSkipCodexDefaultInstructions sets the "skip_codex_default_instructions" field.
+func (u *GroupUpsertBulk) SetSkipCodexDefaultInstructions(v bool) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetSkipCodexDefaultInstructions(v)
+	})
+}
+
+// UpdateSkipCodexDefaultInstructions sets the "skip_codex_default_instructions" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateSkipCodexDefaultInstructions() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateSkipCodexDefaultInstructions()
 	})
 }
 

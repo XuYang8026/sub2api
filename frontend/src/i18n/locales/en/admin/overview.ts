@@ -1208,6 +1208,11 @@ export default {
         free: 'Free Fast',
         freeHint: 'Fast requests in this group still use the priority tier, but customers are charged the equivalent Standard price.'
       },
+      codexInstructions: {
+        title: 'Codex Default Instructions',
+        skip: 'Skip Codex default instructions',
+        hint: 'When enabled, OpenAI OAuth requests in this group that omit instructions are sent upstream with empty instructions instead of the ~4k-token embedded Codex CLI prompt. Requests that carry their own instructions are unaffected.'
+      },
       invalidRequestFallback: {
         title: 'Invalid Request Fallback Group',
         hint: 'Triggered only when upstream explicitly returns prompt too long. Leave empty to disable fallback.',

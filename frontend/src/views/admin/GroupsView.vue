@@ -1593,6 +1593,29 @@
           </p>
         </div>
 
+        <!-- Codex 默认 instructions（OpenAI 与 Composite 平台） -->
+        <div
+          v-if="supportsGroupSkipCodexDefaultInstructions(createForm.platform)"
+          class="border-t border-gray-200 dark:border-dark-400 pt-4 mt-4"
+        >
+          <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
+            {{ t("admin.groups.codexInstructions.title") }}
+          </h4>
+          <div class="flex items-center justify-between gap-4">
+            <label class="text-sm text-gray-600 dark:text-gray-400">
+              {{ t("admin.groups.codexInstructions.skip") }}
+            </label>
+            <Toggle
+              data-testid="create-skip-codex-default-instructions"
+              :aria-label="t('admin.groups.codexInstructions.skip')"
+              v-model="createForm.skip_codex_default_instructions"
+            />
+          </div>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+            {{ t("admin.groups.codexInstructions.hint") }}
+          </p>
+        </div>
+
         <!-- Codex Live 开关（OpenAI 与 Composite 平台） -->
         <div
           v-if="supportsLivePlatform(createForm.platform)"
@@ -3243,6 +3266,29 @@
           </p>
         </div>
 
+        <!-- Codex 默认 instructions（OpenAI 与 Composite 平台） -->
+        <div
+          v-if="supportsGroupSkipCodexDefaultInstructions(editForm.platform)"
+          class="border-t border-gray-200 dark:border-dark-400 pt-4 mt-4"
+        >
+          <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
+            {{ t("admin.groups.codexInstructions.title") }}
+          </h4>
+          <div class="flex items-center justify-between gap-4">
+            <label class="text-sm text-gray-600 dark:text-gray-400">
+              {{ t("admin.groups.codexInstructions.skip") }}
+            </label>
+            <Toggle
+              data-testid="edit-skip-codex-default-instructions"
+              :aria-label="t('admin.groups.codexInstructions.skip')"
+              v-model="editForm.skip_codex_default_instructions"
+            />
+          </div>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+            {{ t("admin.groups.codexInstructions.hint") }}
+          </p>
+        </div>
+
         <!-- Codex Live 开关（OpenAI 与 Composite 平台） -->
         <div
           v-if="supportsLivePlatform(editForm.platform)"
@@ -4332,6 +4378,10 @@ import {
   supportsGroupOpenAIFast,
 } from "./groupsOpenAIFast";
 import {
+  normalizeGroupSkipCodexDefaultInstructions,
+  supportsGroupSkipCodexDefaultInstructions,
+} from "./groupsCodexInstructions";
+import {
   addCustomModelAllowlistItem,
   buildModelAllowlistConfig,
   createModelAllowlistState as createInitialModelAllowlistState,
@@ -4941,6 +4991,7 @@ const createForm = reactive({
   long_context_pricing_enabled: true,
   force_openai_fast: false,
   free_openai_fast: false,
+  skip_codex_default_instructions: false,
   model_pricing: [] as PricingFormEntry[],
   // 图片生成计费配置
   allow_image_generation: false,
@@ -5306,6 +5357,7 @@ const editForm = reactive({
   long_context_pricing_enabled: true,
   force_openai_fast: false,
   free_openai_fast: false,
+  skip_codex_default_instructions: false,
   model_pricing: [] as PricingFormEntry[],
   // 图片生成计费配置
   allow_image_generation: false,
@@ -5783,6 +5835,7 @@ const closeCreateModal = () => {
   createForm.long_context_pricing_enabled = true;
   createForm.force_openai_fast = false;
   createForm.free_openai_fast = false;
+  createForm.skip_codex_default_instructions = false;
   createForm.model_pricing = [];
   createForm.web_search_price_per_call = null;
   createForm.search_price_per_1k = null;
@@ -5896,6 +5949,11 @@ const handleCreateGroup = async () => {
         createForm.platform,
         createForm.force_openai_fast,
       ),
+      skip_codex_default_instructions:
+        normalizeGroupSkipCodexDefaultInstructions(
+          createForm.platform,
+          createForm.skip_codex_default_instructions,
+        ),
       free_openai_fast: normalizeGroupOpenAIFast(
         createForm.platform,
         createForm.free_openai_fast,
@@ -6039,6 +6097,8 @@ const handleEdit = async (group: AdminGroup) => {
     group.long_context_pricing_enabled ?? true;
   editForm.force_openai_fast = group.force_openai_fast ?? false;
   editForm.free_openai_fast = group.free_openai_fast ?? false;
+  editForm.skip_codex_default_instructions =
+    group.skip_codex_default_instructions ?? false;
   editForm.model_pricing = groupPricingFromAPI(group.model_pricing);
   editForm.allow_image_generation = group.allow_image_generation ?? false;
   editForm.allow_batch_image_generation =
@@ -6173,6 +6233,7 @@ const closeEditModal = () => {
   editForm.long_context_pricing_enabled = true;
   editForm.force_openai_fast = false;
   editForm.free_openai_fast = false;
+  editForm.skip_codex_default_instructions = false;
   editForm.model_pricing = [];
   editForm.web_search_price_per_call = null;
   editForm.search_price_per_1k = null;
@@ -6231,6 +6292,11 @@ const handleUpdateGroup = async () => {
         editForm.platform,
         editForm.force_openai_fast,
       ),
+      skip_codex_default_instructions:
+        normalizeGroupSkipCodexDefaultInstructions(
+          editForm.platform,
+          editForm.skip_codex_default_instructions,
+        ),
       free_openai_fast: normalizeGroupOpenAIFast(
         editForm.platform,
         editForm.free_openai_fast,

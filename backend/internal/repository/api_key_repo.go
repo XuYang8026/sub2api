@@ -202,6 +202,8 @@ func (r *apiKeyRepository) GetByKeyForAuth(ctx context.Context, key string) (*se
 				group.FieldLongContextPricingEnabled,
 				group.FieldModelPricing,
 				group.FieldClaudeCodeOnly,
+				// <fork:codex-default-instructions>
+				group.FieldSkipCodexDefaultInstructions,
 				group.FieldFallbackGroupID,
 				group.FieldFallbackGroupIDOnInvalidRequest,
 				group.FieldModelRoutingEnabled,
@@ -1032,6 +1034,9 @@ func groupEntityToService(g *dbent.Group) *service.Group {
 		ProfitSafetyBuffer:              g.ProfitSafetyBuffer,
 		CreatedAt:                       g.CreatedAt,
 		UpdatedAt:                       g.UpdatedAt,
+
+		// <fork:codex-default-instructions>
+		SkipCodexDefaultInstructions: g.SkipCodexDefaultInstructions,
 	}
 }
 
