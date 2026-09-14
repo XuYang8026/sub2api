@@ -1971,6 +1971,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 		pendingLines = pendingLines[:0]
 		return true
 	}
+	var bareErrorPassthroughErr error
 	ensureResponseFailedTerminal := func() {
 		if !sawBareError || sawResponseFailed || failureDelivered {
 			return
@@ -1978,6 +1979,28 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 		if bareErrorAccountSideEffectsPending {
 			s.handleOpenAIStreamTerminalAccountSideEffects(c, account, bareErrorPayload, failedMessage, resp.Header, mappedModel)
 			bareErrorAccountSideEffectsPending = false
+		}
+		// Bare error followed by EOF: before synthesising a response.failed terminal
+		// inside an HTTP 200 stream, give the operator passthrough rule a chance to
+		// turn the request-scoped failure into a real HTTP error while nothing has
+		// been committed to the client yet.
+		if !clientDisconnected && !openAIStreamClientOutputStarted(c, clientOutputStarted) {
+			if hit, _, _ := detectOpenAICyberPolicy(bareErrorPayload); !hit {
+				if status, errType, errMsg, matched := applyOpenAIStreamFailedErrorPassthroughRule(c, account.Platform, bareErrorPayload, failedMessage); matched {
+					s.recordOpenAIStreamUpstreamError(c, account, true, upstreamRequestID, "http_error", bareErrorPayload, failedMessage)
+					MarkResponseCommitted(c)
+					c.Writer.Header().Set("Content-Type", "application/json; charset=utf-8")
+					c.JSON(status, gin.H{
+						"error": gin.H{
+							"type":    errType,
+							"message": errMsg,
+						},
+					})
+					failureDelivered = true
+					bareErrorPassthroughErr = fmt.Errorf("upstream response failed: passthrough rule matched message=%s", errMsg)
+					return
+				}
+			}
 		}
 		if clientDisconnected || !writePendingLines() {
 			return
@@ -2130,7 +2153,10 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 						return resultWithUsage(),
 							s.newOpenAIStreamFailoverErrorWithModel(c, account, true, upstreamRequestID, dataBytes, failedMessage, mappedModel, resp.Header)
 					}
-					if !cyberHit && !sawBareError {
+					// After a Codex bare `error` event the authoritative payload is the following
+					// response.failed: evaluate the operator passthrough rule on it instead of
+					// silently forwarding the failure inside an HTTP 200 stream.
+					if !cyberHit && (!sawBareError || eventType == "response.failed") {
 						if status, errType, errMsg, matched := applyOpenAIStreamFailedErrorPassthroughRule(c, account.Platform, dataBytes, failedMessage); matched {
 							// 命中透传规则也要记录 ops 上游错误事件（对齐 CC/Messages 与
 							// antigravity 先例），否则透传命中的 failed 在监控中不可见。
@@ -2233,6 +2259,9 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 		}
 	}
 	ensureResponseFailedTerminal()
+	if bareErrorPassthroughErr != nil {
+		return resultWithUsage(), bareErrorPassthroughErr
+	}
 	if err := documentScanner.Err(); err != nil {
 		if (sawDone || sawTerminalEvent) && !sawFailedEvent {
 			s.clearOpenAIProxyStreamDisconnect(account)

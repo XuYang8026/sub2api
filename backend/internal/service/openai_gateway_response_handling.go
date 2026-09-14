@@ -377,6 +377,27 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			bareErrorAccountSideEffectsPending = false
 		}
 		if codexFailureTerminal && sawBareError && !sawResponseFailed && !clientDisconnected {
+			// Bare error followed by EOF: before synthesising a response.failed terminal
+			// inside an HTTP 200 stream, give the operator passthrough rule a chance to
+			// turn the request-scoped failure into a real HTTP error while nothing has
+			// been committed to the client yet.
+			if !openAIStreamClientOutputStarted(c, clientOutputStarted) {
+				if hit, _, _ := detectOpenAICyberPolicy(bareErrorPayload); !hit {
+					if status, errType, errMsg, matched := applyOpenAIStreamFailedErrorPassthroughRule(c, account.Platform, bareErrorPayload, failedMessage); matched {
+						sawFailedEvent = true
+						s.recordOpenAIStreamUpstreamError(c, account, false, upstreamRequestID, "http_error", bareErrorPayload, failedMessage)
+						MarkResponseCommitted(c)
+						c.Writer.Header().Set("Content-Type", "application/json; charset=utf-8")
+						c.JSON(status, gin.H{
+							"error": gin.H{
+								"type":    errType,
+								"message": errMsg,
+							},
+						})
+						return resultWithUsage(), fmt.Errorf("upstream response failed: passthrough rule matched message=%s", errMsg)
+					}
+				}
+			}
 			applyAttemptResponseHeaders()
 			if _, err := writePendingString(buildOpenAIResponseFailedSSE(responseID, originalModel, bareErrorPayload, failedMessage)); err != nil {
 				handlePendingWriteError(err)
@@ -582,7 +603,10 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 						streamEarlyErr = s.newOpenAIStreamFailoverErrorWithModel(c, account, false, upstreamRequestID, dataBytes, failedMessage, mappedModel, resp.Header)
 						return
 					}
-					if !cyberHit && !sawBareError {
+					// After a Codex bare `error` event the authoritative payload is the following
+					// response.failed: evaluate the operator passthrough rule on it instead of
+					// silently forwarding the failure inside an HTTP 200 stream.
+					if !cyberHit && (!sawBareError || eventType == "response.failed") {
 						if status, errType, errMsg, matched := applyOpenAIStreamFailedErrorPassthroughRule(c, account.Platform, dataBytes, failedMessage); matched {
 							sawFailedEvent = true
 							// 命中透传规则也要记录 ops 上游错误事件（对齐 CC/Messages 与
